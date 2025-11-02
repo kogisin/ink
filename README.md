@@ -4,15 +4,13 @@
     Write smart contracts in Rust for <a href="https://github.com/paritytech/polkadot-sdk">Polkadot SDK</a>.
 </h1>
 
-[![linux][a1]][a2] [![codecov][c1]][c2] [![coveralls][d1]][d2] [![loc][e1]][e2]<br/>
+[![linux][a1]][a2] [![codecov][c1]][c2] [![loc][e1]][e2]<br/>
 [![stack-exchange][s1]][s2] [![telegram][o1]][o2] [![X][p1]][p2]
 
 [a1]: https://github.com/use-ink/ink/workflows/continuous-integration/badge.svg
 [a2]: https://github.com/use-ink/ink/actions?query=workflow%3Acontinuous-integration+branch%3Amaster
 [c1]: https://codecov.io/gh/use-ink/ink/branch/master/graph/badge.svg
 [c2]: https://codecov.io/gh/use-ink/ink/branch/master
-[d1]: https://coveralls.io/repos/github/use-ink/ink/badge.svg?branch=master
-[d2]: https://coveralls.io/github/use-ink/ink?branch=master
 [e1]: https://tokei.rs/b1/github/use-ink/ink?category=code
 [e2]: https://github.com/Aaronepower/tokei#badges
 [f1]: https://img.shields.io/badge/click-blue.svg
@@ -33,8 +31,8 @@
 [t2]: https://use-ink.github.io/ink/ink_e2e
 [o1]: https://img.shields.io/badge/click-white.svg?logo=Telegram&label=ink!%20Support%20on%20Telegram&labelColor=white&color=blue
 [o2]: https://t.me/inkathon
-[p1]: https://twitter.com/ink_lang
-[p2]: https://img.shields.io/twitter/follow/ink_lang?label=Follow%20us%20on%20X
+[p1]: https://img.shields.io/twitter/follow/ink_lang
+[p2]: https://x.com/ink_lang
 
 [ink! Website](https://use.ink)&nbsp;&nbsp;•&nbsp;&nbsp;
 [Developer Documentation](https://use.ink/docs)
@@ -75,7 +73,7 @@ See [here](https://use-ink.github.io/ink/ink/attr.contract.html) for a more deta
 
 ## Developer Documentation
 
-We have [a very comprehensive documentation portal](https://use.ink),
+We have [a comprehensive documentation portal](https://use.ink),
 but if you are looking for the crate level documentation itself, then these are
 the relevant links:
 

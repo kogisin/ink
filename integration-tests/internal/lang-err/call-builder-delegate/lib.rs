@@ -19,12 +19,12 @@
 #[ink::contract]
 mod call_builder {
     use ink::env::{
+        DefaultEnvironment,
         call::{
-            build_call,
             ExecutionInput,
             Selector,
+            build_call,
         },
-        DefaultEnvironment,
     };
 
     #[ink(storage)]
@@ -52,7 +52,7 @@ mod call_builder {
         #[ink(message)]
         pub fn delegate(
             &mut self,
-            address: ink::H160,
+            address: Address,
             selector: [u8; 4],
         ) -> Option<ink::LangError> {
             let result = build_call::<DefaultEnvironment>()
@@ -80,7 +80,7 @@ mod call_builder {
         /// This message does not allow the caller to handle any `LangErrors`, for that
         /// use the `call` message instead.
         #[ink(message)]
-        pub fn invoke(&mut self, address: ink::H160, selector: [u8; 4]) -> i32 {
+        pub fn invoke(&mut self, address: Address, selector: [u8; 4]) -> i32 {
             use ink::env::call::build_call;
 
             build_call::<DefaultEnvironment>()
@@ -172,7 +172,9 @@ mod call_builder {
             let call_result = client.call(&origin, &call).dry_run().await?;
             assert!(call_result.did_revert());
             let err_msg = String::from_utf8_lossy(call_result.return_data());
-            assert!(err_msg.contains("Cross-contract call failed with CouldNotReadInput"));
+            assert!(
+                err_msg.contains("Cross-contract call failed with CouldNotReadInput")
+            );
 
             Ok(())
         }

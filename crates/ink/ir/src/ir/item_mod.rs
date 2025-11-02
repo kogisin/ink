@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use crate::{
+    Callable,
     error::ExtError as _,
     ir,
     ir::idents_lint,
-    Callable,
 };
 use proc_macro2::{
     Ident,
@@ -144,24 +144,59 @@ impl ItemMod {
     }
 
     /// Ensures that the given slice of items contains at least one ink! constructor.
+    ///
+    /// # Note
+    ///
+    /// Also ensure that there's only one constructor in "sol" ABI mode,
+    /// or that at least one constructor is annotated as the default constructor in "all"
+    /// ABI mode.
+    ///
+    /// See <https://use.ink/docs/v6/basics/abi> for details about ABI modes.
     fn ensure_contains_constructor(
         module_span: Span,
         items: &[ir::Item],
     ) -> Result<(), syn::Error> {
-        let found_constructor = items
-            .iter()
-            .filter_map(|item| {
-                match item {
-                    ir::Item::Ink(ir::InkItem::ImplBlock(item_impl)) => {
-                        Some(item_impl.iter_constructors())
+        let all_constructors = || {
+            items
+                .iter()
+                .filter_map(|item| {
+                    match item {
+                        ir::Item::Ink(ir::InkItem::ImplBlock(item_impl)) => {
+                            Some(item_impl.iter_constructors())
+                        }
+                        _ => None,
                     }
-                    _ => None,
-                }
-            })
-            .any(|mut constructors| constructors.next().is_some());
-        if !found_constructor {
-            return Err(format_err!(module_span, "missing ink! constructor"))
+                })
+                .flatten()
+        };
+
+        let n_constructors = all_constructors().count();
+        if n_constructors == 0 {
+            return Err(format_err!(module_span, "missing ink! constructor"));
         }
+
+        #[cfg(ink_abi = "sol")]
+        if n_constructors > 1 {
+            return Err(format_err!(
+                module_span,
+                "multiple constructors are not supported in Solidity ABI compatibility mode"
+            ));
+        }
+
+        #[cfg(ink_abi = "all")]
+        {
+            let has_default_constructor =
+                || all_constructors().any(|constructor| constructor.is_default());
+            if n_constructors > 1 && !has_default_constructor() {
+                return Err(format_err!(
+                    module_span,
+                    "One constructor used for Solidity ABI encoded instantiation \
+                    must be annotated with the `default` attribute argument \
+                    in \"all\" ABI mode"
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -263,20 +298,26 @@ impl ItemMod {
         fn verify_attr(a: &syn::Attribute) -> Result<(), syn::Error> {
             match &a.meta {
                 syn::Meta::List(list) => {
-                    if let Some(ident) = list.path.get_ident() {
-                        if ident.eq("cfg") {
-                            return list.parse_nested_meta(verify_cfg_attrs);
-                        }
+                    if let Some(ident) = list.path.get_ident()
+                        && ident.eq("cfg")
+                    {
+                        return list.parse_nested_meta(verify_cfg_attrs);
                     }
-                    unreachable!("`verify_attr` can only be called for `#[cfg(…)]`, not for other `List`");
+                    unreachable!(
+                        "`verify_attr` can only be called for `#[cfg(…)]`, not for other `List`"
+                    );
                 }
                 syn::Meta::Path(_) => {
                     // not relevant, we are only looking at `#[cfg(…)]`
-                    unreachable!("`verify_attr` can only be called for `#[cfg(…)]`, not for `Path`");
+                    unreachable!(
+                        "`verify_attr` can only be called for `#[cfg(…)]`, not for `Path`"
+                    );
                 }
                 syn::Meta::NameValue(_) => {
                     // not relevant, we are only looking at `#[cfg(…)]`
-                    unreachable!("`verify_attr` can only be called for `#[cfg(…)]`, not for `NameValue`");
+                    unreachable!(
+                        "`verify_attr` can only be called for `#[cfg(…)]`, not for `NameValue`"
+                    );
                 }
             }
         }
@@ -367,13 +408,18 @@ impl ItemMod {
 
             if let Some(wildcard) = wildcard_selector {
                 match other_messages.len() as u32 {
-                    0 => return Err(format_err!(
-                        wildcard.span(),
-                        "missing definition of another message with TODO in tandem with a wildcard \
+                    0 => {
+                        return Err(format_err!(
+                            wildcard.span(),
+                            "missing definition of another message with TODO in tandem with a wildcard \
                         selector",
-                    )),
+                        ))
+                    }
                     1 => {
-                        if !other_messages[0].callable().has_wildcard_complement_selector() {
+                        if !other_messages[0]
+                            .callable()
+                            .has_wildcard_complement_selector()
+                        {
                             return Err(format_err!(
                                 other_messages[0].callable().span(),
                                 "when using a wildcard selector `selector = _` for an ink! message \
@@ -612,12 +658,12 @@ impl ItemMod {
     /// # }
     /// # }}).unwrap();
     /// ```
-    pub fn impls(&self) -> IterItemImpls {
+    pub fn impls(&self) -> IterItemImpls<'_> {
         IterItemImpls::new(self)
     }
 
     /// Returns an iterator yielding all event definitions in this ink! module.
-    pub fn events(&self) -> IterEvents {
+    pub fn events(&self) -> IterEvents<'_> {
         IterEvents::new(self)
     }
 
@@ -1116,7 +1162,8 @@ mod tests {
 
     #[test]
     fn wildcard_selector_without_other_message_fails() {
-        assert_fail(syn::parse_quote! {
+        assert_fail(
+            syn::parse_quote! {
                 mod my_module {
                     #[ink(storage)]
                     pub struct MyStorage {}
@@ -1130,13 +1177,14 @@ mod tests {
                     }
                 }
             },
-            "missing definition of another message with TODO in tandem with a wildcard selector"
+            "missing definition of another message with TODO in tandem with a wildcard selector",
         )
     }
 
     #[test]
     fn wildcard_selector_and_one_other_message_without_well_known_selector_fails() {
-        assert_fail(syn::parse_quote! {
+        assert_fail(
+            syn::parse_quote! {
                 mod my_module {
                     #[ink(storage)]
                     pub struct MyStorage {}
@@ -1153,8 +1201,8 @@ mod tests {
                     }
                 }
             },
-"when using a wildcard selector `selector = _` for an ink! message then the other \
-            message must use the wildcard complement `selector = @`"
+            "when using a wildcard selector `selector = _` for an ink! message then the other \
+            message must use the wildcard complement `selector = @`",
         );
     }
 
@@ -1282,9 +1330,10 @@ mod tests {
         let res = <ir::ItemMod as TryFrom<syn::ItemMod>>::try_from(item_mod)
             .map_err(|err| err.to_string());
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .starts_with("The feature `std` is not allowed in `cfg`."));
+        assert!(
+            res.unwrap_err()
+                .starts_with("The feature `std` is not allowed in `cfg`.")
+        );
     }
 
     #[test]
@@ -1350,8 +1399,9 @@ mod tests {
         let res = <ir::ItemMod as TryFrom<syn::ItemMod>>::try_from(item_mod)
             .map_err(|err| err.to_string());
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .starts_with("This `cfg` attribute is not allowed."));
+        assert!(
+            res.unwrap_err()
+                .starts_with("This `cfg` attribute is not allowed.")
+        );
     }
 }

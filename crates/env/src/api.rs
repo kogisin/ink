@@ -14,23 +14,42 @@
 
 //! The public raw interface towards the host engine.
 
-#[cfg(feature = "unstable-hostfn")]
-use crate::call::{
-    ConstructorReturnType,
-    CreateParams,
-    FromAddr,
-    LimitParamsV2,
+#[cfg(feature = "xcm")]
+use ink_primitives::Weight;
+use ink_primitives::{
+    Address,
+    CodeHashErr,
+    H256,
+    U256,
+    abi::{
+        Ink,
+        Sol,
+    },
+    sol::SolResultEncode,
 };
+use ink_storage_traits::Storable;
+use pallet_revive_uapi::ReturnFlags;
+
 use crate::{
+    DecodeDispatch,
+    DispatchError,
+    Result,
     backend::{
         EnvBackend,
         TypedEnvBackend,
     },
     call::{
-        utils::DecodeMessageResult,
         Call,
         CallParams,
+        ConstructorReturnType,
+        CreateParams,
         DelegateCall,
+        FromAddr,
+        LimitParamsV2,
+        utils::{
+            DecodeMessageResult,
+            EncodeArgsWith,
+        },
     },
     engine::{
         EnvInstance,
@@ -45,29 +64,22 @@ use crate::{
         Environment,
         Gas,
     },
-    DecodeDispatch,
-    DispatchError,
-    Result,
 };
-use ink_primitives::{
-    reflect::{
-        AbiDecodeWith,
-        AbiEncodeWith,
-    },
-    H160,
-    H256,
-    U256,
-};
-use ink_storage_traits::Storable;
-use pallet_revive_uapi::ReturnFlags;
 
 /// Returns the address of the caller of the executed contract.
 ///
 /// # Errors
 ///
 /// If the returned caller cannot be properly decoded.
-pub fn caller() -> H160 {
+pub fn caller() -> Address {
     <EnvInstance as OnInstance>::on_instance(TypedEnvBackend::caller)
+}
+
+/// Returns the block's `ref_time` limit.
+///
+/// See <https://use.ink/docs/v6/basics/gas/#what-is-gas-in-ink> for more information.
+pub fn gas_limit() -> u64 {
+    <EnvInstance as OnInstance>::on_instance(TypedEnvBackend::gas_limit)
 }
 
 /// Returns the transferred value for the contract execution.
@@ -86,12 +98,9 @@ pub fn transferred_value() -> U256 {
 /// # Errors
 ///
 /// If the returned value cannot be properly decoded.
-pub fn weight_to_fee<E>(gas: Gas) -> E::Balance
-where
-    E: Environment,
-{
+pub fn weight_to_fee(gas: Gas) -> U256 {
     <EnvInstance as OnInstance>::on_instance(|instance| {
-        TypedEnvBackend::weight_to_fee::<E>(instance, gas)
+        TypedEnvBackend::weight_to_fee(instance, gas)
     })
 }
 
@@ -109,6 +118,20 @@ where
     })
 }
 
+/// Retrieves the account id for a specified address.
+///
+/// # Errors
+///
+/// If the returned value cannot be properly decoded.
+pub fn to_account_id<E>(addr: Address) -> E::AccountId
+where
+    E: Environment,
+{
+    <EnvInstance as OnInstance>::on_instance(|instance| {
+        TypedEnvBackend::to_account_id::<E>(instance, addr)
+    })
+}
+
 /// Returns the account ID of the executed contract.
 ///
 /// # Note
@@ -118,7 +141,6 @@ where
 /// # Errors
 ///
 /// If the returned value cannot be properly decoded.
-#[cfg(feature = "unstable-hostfn")]
 pub fn account_id<E>() -> E::AccountId
 where
     E: Environment,
@@ -133,7 +155,7 @@ where
 /// # Errors
 ///
 /// If the returned value cannot be properly decoded.
-pub fn address() -> H160 {
+pub fn address() -> Address {
     <EnvInstance as OnInstance>::on_instance(|instance| {
         TypedEnvBackend::address(instance)
     })
@@ -170,24 +192,66 @@ where
 /// # Errors
 ///
 /// If the returned value cannot be properly decoded.
-#[cfg(feature = "unstable-hostfn")]
-pub fn minimum_balance<E>() -> E::Balance
-where
-    E: Environment,
-{
+pub fn minimum_balance() -> U256 {
     <EnvInstance as OnInstance>::on_instance(|instance| {
-        TypedEnvBackend::minimum_balance::<E>(instance)
+        TypedEnvBackend::minimum_balance(instance)
     })
 }
 
 /// Emits an event with the given event data.
-pub fn emit_event<E, Evt>(event: Evt)
+///
+/// # Note
+///
+/// In "all" ABI mode, both an ink! and Solidity ABI event are emitted.
+#[cfg(not(ink_abi = "all"))]
+pub fn emit_event<Evt>(event: Evt)
 where
-    E: Environment,
-    Evt: Event,
+    Evt: Event<crate::DefaultAbi>,
 {
     <EnvInstance as OnInstance>::on_instance(|instance| {
-        TypedEnvBackend::emit_event::<E, Evt>(instance, event)
+        TypedEnvBackend::emit_event::<Evt, crate::DefaultAbi>(instance, &event)
+    })
+}
+
+/// Emits an event with the given event data.
+///
+/// # Note
+///
+/// In "all" ABI mode, both an ink! and Solidity ABI event are emitted.
+#[cfg(ink_abi = "all")]
+pub fn emit_event<Evt>(event: Evt)
+where
+    Evt: Event<Ink> + Event<Sol>,
+{
+    // Emits ink! ABI encoded event.
+    <EnvInstance as OnInstance>::on_instance(|instance| {
+        TypedEnvBackend::emit_event::<Evt, Ink>(instance, &event)
+    });
+
+    // Emits Solidity ABI encoded event.
+    <EnvInstance as OnInstance>::on_instance(|instance| {
+        TypedEnvBackend::emit_event::<Evt, Sol>(instance, &event)
+    });
+}
+
+/// Emits an event with the given event data using the ink! ABI encoding (i.e. with SCALE
+/// codec for event data encode/decode).
+pub fn emit_event_ink<Evt>(event: Evt)
+where
+    Evt: Event<Ink>,
+{
+    <EnvInstance as OnInstance>::on_instance(|instance| {
+        TypedEnvBackend::emit_event::<Evt, Ink>(instance, &event)
+    })
+}
+
+/// Emits an event with the given event data using the Solidity ABI encoding.
+pub fn emit_event_sol<Evt>(event: Evt)
+where
+    Evt: Event<Sol>,
+{
+    <EnvInstance as OnInstance>::on_instance(|instance| {
+        TypedEnvBackend::emit_event::<Evt, Sol>(instance, &event)
     })
 }
 
@@ -228,7 +292,6 @@ where
 /// # Errors
 ///
 /// - If the decoding of the typed value failed (`KeyNotFound`)
-#[cfg(feature = "unstable-hostfn")]
 pub fn take_contract_storage<K, R>(key: &K) -> Result<Option<R>>
 where
     K: scale::Encode,
@@ -243,7 +306,6 @@ where
 /// storage.
 ///
 /// If a value is stored under the specified key, the size of the value is returned.
-#[cfg(feature = "unstable-hostfn")]
 pub fn contains_contract_storage<K>(key: &K) -> Option<u32>
 where
     K: scale::Encode,
@@ -257,7 +319,6 @@ where
 ///
 /// If a value was stored under the specified storage key, the size of the value is
 /// returned.
-#[cfg(feature = "unstable-hostfn")]
 pub fn clear_contract_storage<K>(key: &K) -> Option<u32>
 where
     K: scale::Encode,
@@ -291,9 +352,8 @@ pub fn invoke_contract<E, Args, R, Abi>(
 ) -> Result<ink_primitives::MessageResult<R>>
 where
     E: Environment,
-
-    Args: AbiEncodeWith<Abi>,
-    R: AbiDecodeWith<Abi> + DecodeMessageResult<Abi>,
+    Args: EncodeArgsWith<Abi>,
+    R: DecodeMessageResult<Abi>,
 {
     <EnvInstance as OnInstance>::on_instance(|instance| {
         TypedEnvBackend::invoke_contract::<E, Args, R, Abi>(instance, params)
@@ -317,9 +377,8 @@ pub fn invoke_contract_delegate<E, Args, R, Abi>(
 ) -> Result<ink_primitives::MessageResult<R>>
 where
     E: Environment,
-
-    Args: AbiEncodeWith<Abi>,
-    R: AbiDecodeWith<Abi> + DecodeMessageResult<Abi>,
+    Args: EncodeArgsWith<Abi>,
+    R: DecodeMessageResult<Abi>,
 {
     <EnvInstance as OnInstance>::on_instance(|instance| {
         TypedEnvBackend::invoke_contract_delegate::<E, Args, R, Abi>(instance, params)
@@ -345,20 +404,20 @@ where
 /// - If the instantiation process runs out of gas.
 /// - If given insufficient endowment.
 /// - If the returned account ID failed to decode properly.
-#[cfg(feature = "unstable-hostfn")]
 pub fn instantiate_contract<E, ContractRef, Args, R, Abi>(
     params: &CreateParams<E, ContractRef, LimitParamsV2, Args, R, Abi>,
 ) -> Result<
-    ink_primitives::ConstructorResult<<R as ConstructorReturnType<ContractRef>>::Output>,
+    ink_primitives::ConstructorResult<
+        <R as ConstructorReturnType<ContractRef, Abi>>::Output,
+    >,
 >
 where
     E: Environment,
     ContractRef: FromAddr + crate::ContractReverseReference,
     <ContractRef as crate::ContractReverseReference>::Type:
         crate::reflect::ContractConstructorDecoder,
-
-    Args: AbiEncodeWith<Abi>,
-    R: ConstructorReturnType<ContractRef>,
+    Args: EncodeArgsWith<Abi>,
+    R: ConstructorReturnType<ContractRef, Abi>,
 {
     <EnvInstance as OnInstance>::on_instance(|instance| {
         TypedEnvBackend::instantiate_contract::<E, ContractRef, Args, R, Abi>(
@@ -378,7 +437,7 @@ where
 /// execution of the destroyed contract is halted. Or it failed during the termination
 /// which is considered fatal and results in a trap and rollback.
 #[cfg(feature = "unstable-hostfn")]
-pub fn terminate_contract(beneficiary: H160) -> ! {
+pub fn terminate_contract(beneficiary: Address) -> ! {
     <EnvInstance as OnInstance>::on_instance(|instance| {
         TypedEnvBackend::terminate_contract(instance, beneficiary)
     })
@@ -397,7 +456,7 @@ pub fn terminate_contract(beneficiary: H160) -> ! {
 /// - If the contract does not have sufficient free funds.
 /// - If the transfer had brought the sender's total balance below the minimum balance.
 ///   You need to use `terminate_contract` in case this is your intention.
-pub fn transfer<E>(destination: H160, value: U256) -> Result<()>
+pub fn transfer<E>(destination: Address, value: U256) -> Result<()>
 where
     E: Environment,
 {
@@ -442,7 +501,7 @@ where
 ///
 /// # Note
 ///
-/// This function  stops the execution of the contract immediately.
+/// This function stops the execution of the contract immediately.
 #[cfg(not(feature = "std"))]
 pub fn return_value<R>(return_flags: ReturnFlags, return_value: &R) -> !
 where
@@ -473,10 +532,10 @@ where
 ///
 /// # Note
 ///
-/// This function  stops the execution of the contract immediately.
+/// This function stops the execution of the contract immediately.
 pub fn return_value_solidity<R>(return_flags: ReturnFlags, return_value: &R) -> !
 where
-    R: alloy_sol_types::SolValue,
+    R: for<'a> SolResultEncode<'a>,
 {
     <EnvInstance as OnInstance>::on_instance(|instance| {
         EnvBackend::return_value_solidity::<R>(instance, return_flags, return_value)
@@ -617,7 +676,7 @@ pub fn ecdsa_to_eth_address(pubkey: &[u8; 33], output: &mut [u8; 20]) -> Result<
 ///
 /// - If sr25519 signature cannot be verified.
 ///
-/// **WARNING**: this function is from the [unstable interface](https://github.com/paritytech/substrate/tree/master/frame/contracts#unstable-interfaces),
+/// **WARNING**: this function is from the [unstable interface](https://github.com/paritytech/polkadot-sdk/tree/master/substrate/frame/revive#unstable-interfaces)
 /// which is unsafe and normally is not available on production chains.
 #[cfg(feature = "unstable-hostfn")]
 pub fn sr25519_verify(
@@ -630,13 +689,20 @@ pub fn sr25519_verify(
     })
 }
 
-/// Checks whether the specified account is a contract.
+/// Checks whether `addr` is a contract.
+///
+/// # Notes
+///
+/// If `addr` references a precompile address, the return value will be `true`.
+///
+/// The function [`caller_is_origin`] performs better when checking whether your
+/// contract is being called by a contract or an account. It performs better
+/// for this case as it does not require any storage lookups.
 ///
 /// # Errors
 ///
 /// If the returned value cannot be properly decoded.
-#[cfg(feature = "unstable-hostfn")]
-pub fn is_contract(account: &H160) -> bool {
+pub fn is_contract(account: &Address) -> bool {
     <EnvInstance as OnInstance>::on_instance(|instance| {
         TypedEnvBackend::is_contract(instance, account)
     })
@@ -648,7 +714,7 @@ pub fn is_contract(account: &H160) -> bool {
 ///
 /// - If no code hash was found for the specified account id.
 /// - If the returned value cannot be properly decoded.
-pub fn code_hash(addr: &H160) -> Result<H256> {
+pub fn code_hash(addr: &Address) -> core::result::Result<H256, CodeHashErr> {
     <EnvInstance as OnInstance>::on_instance(|instance| {
         TypedEnvBackend::code_hash(instance, addr)
     })
@@ -659,8 +725,7 @@ pub fn code_hash(addr: &H160) -> Result<H256> {
 /// # Errors
 ///
 /// If the returned value cannot be properly decoded.
-#[cfg(feature = "unstable-hostfn")]
-pub fn own_code_hash() -> Result<H256> {
+pub fn own_code_hash() -> H256 {
     <EnvInstance as OnInstance>::on_instance(|instance| {
         TypedEnvBackend::own_code_hash(instance)
     })
@@ -679,13 +744,9 @@ pub fn own_code_hash() -> Result<H256> {
 /// # Errors
 ///
 /// If the returned value cannot be properly decoded.
-#[cfg(feature = "unstable-hostfn")]
-pub fn caller_is_origin<E>() -> bool
-where
-    E: Environment,
-{
+pub fn caller_is_origin() -> bool {
     <EnvInstance as OnInstance>::on_instance(|instance| {
-        TypedEnvBackend::caller_is_origin::<E>(instance)
+        TypedEnvBackend::caller_is_origin(instance)
     })
 }
 
@@ -700,13 +761,9 @@ where
 /// # Errors
 ///
 /// If the returned value cannot be properly decoded.
-#[cfg(feature = "unstable-hostfn")]
-pub fn caller_is_root<E>() -> bool
-where
-    E: Environment,
-{
+pub fn caller_is_root() -> bool {
     <EnvInstance as OnInstance>::on_instance(|instance| {
-        TypedEnvBackend::caller_is_root::<E>(instance)
+        TypedEnvBackend::caller_is_root(instance)
     })
 }
 
@@ -819,55 +876,49 @@ where
     <EnvInstance as OnInstance>::on_instance(|instance| instance.set_code_hash(code_hash))
 }
 
-/// Tries to trigger a runtime dispatchable, i.e. an extrinsic from a pallet.
+/// Estimates the [`Weight`] required to execute a given XCM message.
 ///
-/// `call` (after SCALE encoding) should be decodable to a valid instance of `RuntimeCall`
-/// enum.
-///
-/// For more details consult
-/// [host function documentation](https://paritytech.github.io/substrate/master/pallet_contracts/api_doc/trait.Current.html#tymethod.call_runtime).
+/// This is done by invoking [the XCM precompile](https://paritytech.github.io/polkadot-sdk/master/pallet_xcm/precompiles/struct.XcmPrecompile.html).
+/// For more details consult the [precompile interface](https://github.com/paritytech/polkadot-sdk/blob/master/polkadot/xcm/pallet-xcm/precompiles/src/interface/IXcm.sol).
 ///
 /// # Errors
 ///
-/// - If the call cannot be properly decoded on the pallet contracts side.
-/// - If the runtime doesn't allow for the contract unstable feature.
-/// - If the runtime doesn't allow for dispatching this call from a contract.
-///
-/// # Panics
-///
-/// Panics in the off-chain environment.
-#[cfg(feature = "unstable-hostfn")]
-pub fn call_runtime<E, Call>(call: &Call) -> Result<()>
-where
-    E: Environment,
-    Call: scale::Encode,
-{
-    <EnvInstance as OnInstance>::on_instance(|instance| {
-        TypedEnvBackend::call_runtime::<E, _>(instance, call)
-    })
-}
-
-/// Execute an XCM message locally, using the contract's address as the origin.
-///
-/// For more details consult the
-/// [host function documentation](https://paritytech.github.io/polkadot-sdk/master/pallet_contracts/api_doc/trait.Current.html#tymethod.xcm_execute).
-///
-/// # Errors
-///
-/// - If the message cannot be properly decoded on the `pallet-revive` side.
+/// - If the message cannot be properly decoded in the XCM precompile.
 /// - If the XCM execution fails because of the runtime's XCM configuration.
 ///
 /// # Panics
 ///
 /// Panics in the off-chain environment.
-#[cfg(feature = "unstable-hostfn")]
-pub fn xcm_execute<E, Call>(msg: &xcm::VersionedXcm<Call>) -> Result<()>
+#[cfg(feature = "xcm")]
+pub fn xcm_weigh<Call>(msg: &xcm::VersionedXcm<Call>) -> Result<Weight>
 where
-    E: Environment,
     Call: scale::Encode,
 {
     <EnvInstance as OnInstance>::on_instance(|instance| {
-        TypedEnvBackend::xcm_execute::<E, _>(instance, msg)
+        TypedEnvBackend::xcm_weigh(instance, msg)
+    })
+}
+
+/// Execute an XCM message locally, using the contract's address as the origin.
+///
+/// This is done by invoking [the XCM precompile](https://paritytech.github.io/polkadot-sdk/master/pallet_xcm/precompiles/struct.XcmPrecompile.html).
+/// For more details consult the [precompile interface](https://github.com/paritytech/polkadot-sdk/blob/master/polkadot/xcm/pallet-xcm/precompiles/src/interface/IXcm.sol).
+///
+/// # Errors
+///
+/// - If the message cannot be properly decoded in the XCM precompile.
+/// - If the XCM execution fails because of the runtime's XCM configuration.
+///
+/// # Panics
+///
+/// Panics in the off-chain environment.
+#[cfg(feature = "xcm")]
+pub fn xcm_execute<Call>(msg: &xcm::VersionedXcm<Call>, weight: Weight) -> Result<()>
+where
+    Call: scale::Encode,
+{
+    <EnvInstance as OnInstance>::on_instance(|instance| {
+        TypedEnvBackend::xcm_execute(instance, msg, weight)
     })
 }
 
@@ -876,26 +927,32 @@ where
 /// The `msg` argument has to be SCALE encoded, it needs to be decodable to a valid
 /// instance of the `RuntimeCall` enum.
 ///
-/// For more details consult
-/// [host function documentation](https://paritytech.github.io/polkadot-sdk/master/pallet_contracts/api_doc/trait.Current.html#tymethod.xcm_send).
+/// This is done by invoking [the XCM precompile](https://paritytech.github.io/polkadot-sdk/master/pallet_xcm/precompiles/struct.XcmPrecompile.html).
+/// For more details consult the [precompile interface](https://github.com/paritytech/polkadot-sdk/blob/master/polkadot/xcm/pallet-xcm/precompiles/src/interface/IXcm.sol).
 ///
 /// # Errors
 ///
-/// - If the message cannot be properly decoded on the `pallet-revive` side.
+/// - If the message cannot be properly decoded in the XCM precompile.
 ///
 /// # Panics
 ///
 /// Panics in the off-chain environment.
-#[cfg(feature = "unstable-hostfn")]
-pub fn xcm_send<E, Call>(
+#[cfg(feature = "xcm")]
+pub fn xcm_send<Call>(
     dest: &xcm::VersionedLocation,
     msg: &xcm::VersionedXcm<Call>,
-) -> Result<xcm::v4::XcmHash>
+) -> Result<()>
 where
-    E: Environment,
     Call: scale::Encode,
 {
     <EnvInstance as OnInstance>::on_instance(|instance| {
-        TypedEnvBackend::xcm_send::<E, _>(instance, dest, msg)
+        TypedEnvBackend::xcm_send(instance, dest, msg)
+    })
+}
+
+/// Returns the size of the buffer that is remaining in the backend.
+pub fn remaining_buffer() -> usize {
+    <EnvInstance as OnInstance>::on_instance(|instance| {
+        EnvBackend::remaining_buffer(instance)
     })
 }

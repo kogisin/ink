@@ -128,7 +128,7 @@ where
         <C as Callable>::visibility(self.callable)
     }
 
-    fn inputs(&self) -> InputsIter {
+    fn inputs(&self) -> InputsIter<'_> {
         <C as Callable>::inputs(self.callable)
     }
 
@@ -138,6 +138,16 @@ where
 
     fn statements(&self) -> &[syn::Stmt] {
         <C as Callable>::statements(self.callable)
+    }
+
+    fn name(&self) -> Option<&str> {
+        <C as Callable>::name(self.callable)
+    }
+
+    fn normalized_name(&self) -> String {
+        self.name()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| self.ident().to_string())
     }
 }
 
@@ -187,13 +197,23 @@ pub trait Callable {
     fn visibility(&self) -> Visibility;
 
     /// Returns an iterator yielding all input parameters of the ink! callable.
-    fn inputs(&self) -> InputsIter;
+    fn inputs(&self) -> InputsIter<'_>;
 
     /// Returns the span of the inputs of the ink! callable.
     fn inputs_span(&self) -> Span;
 
     /// Returns a slice over shared references to the statements of the callable.
     fn statements(&self) -> &[syn::Stmt];
+
+    /// Returns the function name override (if any).
+    fn name(&self) -> Option<&str>;
+
+    /// Returns the "normalized" function name
+    ///
+    /// # Note
+    /// This returns the name override (if provided), otherwise the identifier is
+    /// returned.
+    fn normalized_name(&self) -> String;
 }
 
 /// Returns the composed selector of the ink! callable.
@@ -332,7 +352,7 @@ fn compose_selector_preimage<C>(item_impl: &ir::ItemImpl, callable: &C) -> Vec<u
 where
     C: Callable,
 {
-    let callable_ident = callable.ident().to_string().into_bytes();
+    let callable_name = callable.normalized_name().into_bytes();
     let namespace_bytes = item_impl
         .namespace()
         .map(|namespace| namespace.as_bytes().to_vec())
@@ -342,9 +362,9 @@ where
         None => {
             // Inherent implementation block:
             if namespace_bytes.is_empty() {
-                callable_ident
+                callable_name
             } else {
-                [namespace_bytes, callable_ident].join(separator)
+                [namespace_bytes, callable_name].join(separator)
             }
         }
         Some(path) => {
@@ -365,9 +385,9 @@ where
                     .into_bytes()
             };
             if namespace_bytes.is_empty() {
-                [path_bytes, callable_ident].join(separator)
+                [path_bytes, callable_name].join(separator)
             } else {
-                [namespace_bytes, path_bytes, callable_ident].join(separator)
+                [namespace_bytes, path_bytes, callable_name].join(separator)
             }
         }
     }
@@ -604,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn compose_selector_works() {
+    fn inherent_selector_works() {
         assert_compose_selector::<ir::Message, _>(
             syn::parse_quote! {
                 #[ink(impl)]
@@ -616,6 +636,10 @@ mod tests {
             },
             b"my_message".to_vec(),
         );
+    }
+
+    #[test]
+    fn trait_selector_works() {
         assert_compose_selector::<ir::Message, _>(
             syn::parse_quote! {
                 #[ink(impl)]
@@ -640,6 +664,21 @@ mod tests {
         );
         assert_compose_selector::<ir::Message, _>(
             syn::parse_quote! {
+                #[ink(impl)]
+                impl relative::path_to::MyTrait for MyStorage {}
+            },
+            syn::parse_quote! {
+                #[ink(message)]
+                fn my_message(&self) {}
+            },
+            b"MyTrait::my_message".to_vec(),
+        );
+    }
+
+    #[test]
+    fn namespaced_selector_works() {
+        assert_compose_selector::<ir::Message, _>(
+            syn::parse_quote! {
                 #[ink(impl, namespace = "my_namespace")]
                 impl MyStorage {}
             },
@@ -648,6 +687,21 @@ mod tests {
                 fn my_message(&self) {}
             },
             b"my_namespace::my_message".to_vec(),
+        );
+    }
+
+    #[test]
+    fn custom_selector_works() {
+        assert_compose_selector::<ir::Message, _>(
+            syn::parse_quote! {
+                #[ink(impl)]
+                impl MyStorage {}
+            },
+            syn::parse_quote! {
+                #[ink(message, selector = 0xDEADBEEF)]
+                fn my_message(&self) {}
+            },
+            [0xDE, 0xAD, 0xBE, 0xEF],
         );
         assert_compose_selector::<ir::Message, _>(
             syn::parse_quote! {
@@ -660,16 +714,36 @@ mod tests {
             },
             [0xDE, 0xAD, 0xBE, 0xEF],
         );
+    }
+
+    #[test]
+    fn name_override_selector_works() {
         assert_compose_selector::<ir::Message, _>(
             syn::parse_quote! {
                 #[ink(impl)]
-                impl relative::path_to::MyTrait for MyStorage {}
+                impl MyStorage {}
             },
             syn::parse_quote! {
-                #[ink(message)]
+                #[ink(message, name = "myMessage")]
                 fn my_message(&self) {}
             },
-            b"MyTrait::my_message".to_vec(),
+            b"myMessage".to_vec(),
+        );
+    }
+
+    #[test]
+    fn custom_selector_precedence_works() {
+        // Custom selector has higher precedence than name override.
+        assert_compose_selector::<ir::Message, _>(
+            syn::parse_quote! {
+                #[ink(impl)]
+                impl MyStorage {}
+            },
+            syn::parse_quote! {
+                #[ink(message, name = "myMessage", selector = 0xDEADBEEF)]
+                fn my_message(&self) {}
+            },
+            [0xDE, 0xAD, 0xBE, 0xEF],
         );
     }
 }

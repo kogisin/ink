@@ -5,13 +5,12 @@
 #[ink::contract]
 mod mapping {
     use ink::{
+        U256,
         prelude::{
             string::String,
             vec::Vec,
         },
         storage::Mapping,
-        H160,
-        U256,
     };
 
     #[derive(Debug, PartialEq)]
@@ -25,9 +24,9 @@ mod mapping {
     #[derive(Default)]
     pub struct Mappings {
         /// Mapping from owner to number of owned token.
-        balances: Mapping<H160, U256>,
+        balances: Mapping<Address, U256>,
         /// Mapping from owner to aliases.
-        names: Mapping<H160, Vec<String>>,
+        names: Mapping<Address, Vec<String>>,
     }
 
     impl Mappings {
@@ -209,13 +208,8 @@ mod mapping {
 
             // then
             let contains = call_builder.contains_balance();
-            let is_there = client
-                .call(&ink_e2e::bob(), &contains)
-                .dry_run()
-                .await?
-                .return_value();
-
-            assert!(is_there);
+            let is_there = client.call(&ink_e2e::bob(), &contains).dry_run().await?;
+            assert!(is_there.return_value());
 
             Ok(())
         }
@@ -350,6 +344,7 @@ mod mapping {
             Ok(())
         }
 
+        #[ignore]
         #[ink_e2e::test]
         async fn fallible_storage_methods_work<Client: E2EBackend>(
             mut client: Client,
@@ -357,8 +352,8 @@ mod mapping {
             // Makes testing the fallible storage methods more efficient
             const ERR: &str = "For this test the env variable `INK_STATIC_BUFFER_SIZE` needs to be set to `256`";
             let buffer_size = std::env::var("INK_STATIC_BUFFER_SIZE")
-                .unwrap_or_else(|err| panic!("{} {}", ERR, err));
-            assert_eq!(buffer_size, "256", "{}", ERR);
+                .unwrap_or_else(|err| panic!("{ERR} {err}"));
+            assert_eq!(buffer_size, "256", "{ERR}");
 
             // given
             let mut constructor = MappingsRef::new();

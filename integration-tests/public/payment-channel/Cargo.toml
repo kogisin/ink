@@ -1,13 +1,14 @@
 [package]
 name = "payment_channel"
-version = "6.0.0-alpha"
+version = "6.0.0-beta"
 authors = ["Use Ink <ink@use.ink>"]
-edition = "2021"
+edition = "2024"
 publish = false
 
 [dependencies]
+# `unstable-hostfn` is needed for the `pallet-revive` function `terminate_contract`
 ink = { path = "../../../crates/ink", default-features = false, features = ["unstable-hostfn"] }
-sp-core = { git = "https://github.com/paritytech/polkadot-sdk", rev = "28a7ae71cc0eac747bf346804279217a68f700da", default-features = false }
+sp-core = { version = "38.0.0", default-features = false }
 
 [dev-dependencies]
 hex-literal = "1"
@@ -22,3 +23,6 @@ std = [
 ]
 
 ink-as-dependency = []
+
+[package.metadata.ink-lang]
+abi = "ink"

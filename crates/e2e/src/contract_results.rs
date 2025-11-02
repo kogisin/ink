@@ -12,38 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{
+    fmt,
+    fmt::Debug,
+    marker::PhantomData,
+};
+
 use frame_support::pallet_prelude::{
     Decode,
     Encode,
 };
 use ink::codegen::ContractCallBuilder;
 use ink_env::{
-    call::FromAddr,
     Environment,
+    call::{
+        FromAddr,
+        utils::DecodeMessageResult,
+    },
 };
 use ink_primitives::{
+    Address,
     ConstructorResult,
-    MessageResult,
     H256,
+    MessageResult,
 };
-use pallet_revive::{
-    evm::{
-        CallTrace,
-        H160,
-    },
+use ink_revive_types::{
     CodeUploadResult,
     ExecReturnValue,
     InstantiateReturnValue,
     StorageDeposit,
+    evm::CallTrace,
 };
 use sp_runtime::{
     DispatchError,
     Weight,
-};
-use std::{
-    fmt,
-    fmt::Debug,
-    marker::PhantomData,
 };
 
 /// Alias for the contract instantiate result.
@@ -92,64 +94,89 @@ pub type ContractExecResultFor<E> =
     ContractResult<ExecReturnValue, <E as Environment>::Balance>;
 
 /// Result of a contract instantiation using bare call.
-pub struct BareInstantiationResult<EventLog> {
-    /// The address at which the contract was instantiated.
-    pub addr: H160,
+pub struct BareInstantiationResult<E: Environment, EventLog> {
+    // The address at which the contract was instantiated.
+    pub addr: Address,
+    // The account id at which the contract was instantiated.
+    pub account_id: E::AccountId,
     /// Events that happened with the contract instantiation.
     pub events: EventLog,
-    /// todo
+    /// Trace of the instantiated contract.
     pub trace: Option<CallTrace>,
+    /// Code hash of the instantiated contract.
+    pub code_hash: H256,
 }
 
-impl<EventLog> BareInstantiationResult<EventLog> {
-    /// Returns the account id at which the contract was instantiated.
-    pub fn call(&self) -> H160 {
-        self.addr
-    }
-}
-
-/// We implement a custom `Debug` here, as to avoid requiring the trait bound `Debug` for
-/// `E`.
-impl<EventLog> Debug for BareInstantiationResult<EventLog>
+/// We implement a custom `Debug` here, as to avoid requiring the trait bound
+/// `Debug` for `E`.
+impl<E: Environment, EventLog> Debug for BareInstantiationResult<E, EventLog>
 where
     EventLog: Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        f.debug_struct("InstantiationResult")
+        f.debug_struct("BareInstantiationResult")
             .field("addr", &self.addr)
+            .field("account_id", &self.account_id.encode())
             .field("events", &self.events)
             .field("trace", &self.trace)
+            .field("code_hash", &self.code_hash)
             .finish()
     }
 }
 
 /// Result of a contract instantiation.
-pub struct InstantiationResult<E: Environment, EventLog> {
+pub struct InstantiationResult<E: Environment, EventLog, Abi> {
+    /// The address at which the contract was instantiated.
+    pub addr: Address,
     /// The account id at which the contract was instantiated.
-    pub addr: H160,
+    pub account_id: E::AccountId,
     /// The result of the dry run, contains debug messages
     /// if there were any.
-    pub dry_run: InstantiateDryRunResult<E>,
+    pub dry_run: InstantiateDryRunResult<E, Abi>,
     /// Events that happened with the contract instantiation.
     pub events: EventLog,
     /// todo
     pub trace: Option<CallTrace>,
+    /// todo
+    pub code_hash: H256,
 }
 
-impl<E: Environment, EventLog> InstantiationResult<E, EventLog> {
-    /// Returns the account id at which the contract was instantiated.
-    pub fn call_builder<Contract>(&self) -> <Contract as ContractCallBuilder>::Type
+impl<E: Environment, EventLog, Abi> InstantiationResult<E, EventLog, Abi> {
+    /// Returns a call builder for the contract which was instantiated.
+    ///
+    /// # Note
+    ///
+    /// This uses the ABI used for the contract instantiation call.
+    pub fn call_builder<Contract>(&self) -> <Contract as ContractCallBuilder>::Type<Abi>
     where
         Contract: ContractCallBuilder,
-        Contract::Type: FromAddr,
+        <Contract as ContractCallBuilder>::Type<Abi>: FromAddr,
     {
-        <<Contract as ContractCallBuilder>::Type as FromAddr>::from_addr(self.addr)
+        <<Contract as ContractCallBuilder>::Type<Abi> as FromAddr>::from_addr(self.addr)
+    }
+
+    /// Returns a call builder for the specified ABI for the contract which was
+    /// instantiated.
+    ///
+    /// # Note
+    ///
+    /// This is useful for contracts that support multiple ABIs.
+    pub fn call_builder_abi<Contract, CallAbi>(
+        &self,
+    ) -> <Contract as ContractCallBuilder>::Type<CallAbi>
+    where
+        Contract: ContractCallBuilder,
+        <Contract as ContractCallBuilder>::Type<CallAbi>: FromAddr,
+    {
+        <<Contract as ContractCallBuilder>::Type<CallAbi> as FromAddr>::from_addr(
+            self.addr,
+        )
     }
 }
 
 /// We implement a custom `Debug` here, as to avoid requiring the trait bound `Debug` for
 /// `E`.
-impl<E: Environment, EventLog> Debug for InstantiationResult<E, EventLog>
+impl<E: Environment, EventLog, Abi> Debug for InstantiationResult<E, EventLog, Abi>
 where
     E::AccountId: Debug,
     E::Balance: Debug,
@@ -157,6 +184,7 @@ where
     EventLog: Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        // todo add missing fields
         f.debug_struct("InstantiationResult")
             .field("addr", &self.addr)
             .field("dry_run", &self.dry_run)
@@ -193,16 +221,18 @@ where
 }
 
 /// Result of a contract call.
-pub struct CallResult<E: Environment, V, EventLog> {
+pub struct CallResult<E: Environment, V, EventLog, Abi> {
     /// The result of the dry run, contains debug messages if there were any.
-    pub dry_run: CallDryRunResult<E, V>,
+    pub dry_run: CallDryRunResult<E, V, Abi>,
     /// Events that happened with the contract instantiation.
     pub events: EventLog,
     /// todo
     pub trace: Option<CallTrace>,
 }
 
-impl<E: Environment, V: scale::Decode, EventLog> CallResult<E, V, EventLog> {
+impl<E: Environment, V: DecodeMessageResult<Abi>, EventLog, Abi>
+    CallResult<E, V, EventLog, Abi>
+{
     /// Returns the [`MessageResult`] from the execution of the dry-run message
     /// call.
     ///
@@ -220,7 +250,9 @@ impl<E: Environment, V: scale::Decode, EventLog> CallResult<E, V, EventLog> {
     pub fn return_value(self) -> V {
         self.dry_run.return_value()
     }
+}
 
+impl<E: Environment, V, EventLog, Abi> CallResult<E, V, EventLog, Abi> {
     /// Returns the return value of the message dry-run as raw bytes.
     ///
     /// Panics if the dry-run message call failed to execute.
@@ -230,7 +262,7 @@ impl<E: Environment, V: scale::Decode, EventLog> CallResult<E, V, EventLog> {
 }
 
 // TODO(#xxx) Improve the `Debug` implementation.
-impl<E: Environment, V, EventLog> Debug for CallResult<E, V, EventLog>
+impl<E: Environment, V, EventLog, Abi> Debug for CallResult<E, V, EventLog, Abi>
 where
     E: Debug,
     E::Balance: Debug,
@@ -248,17 +280,18 @@ where
 }
 
 /// Result of the dry run of a contract call.
-pub struct CallDryRunResult<E: Environment, V> {
+pub struct CallDryRunResult<E: Environment, V, Abi> {
     /// The result of the dry run, contains debug messages if there were any.
     pub exec_result: ContractExecResultFor<E>,
-    pub _marker: PhantomData<V>,
-    /// todo
+    /// The execution trace (if any).
     pub trace: Option<CallTrace>,
+    /// Phantom data for return type and its ABI encoding.
+    pub _marker: PhantomData<(V, Abi)>,
 }
 
 /// We implement a custom `Debug` here, as to avoid requiring the trait bound `Debug` for
 /// `E`.
-impl<E: Environment, V> Debug for CallDryRunResult<E, V>
+impl<E: Environment, V, Abi> Debug for CallDryRunResult<E, V, Abi>
 where
     E::Balance: Debug,
     E::EventRecord: Debug,
@@ -266,11 +299,12 @@ where
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("CallDryRunResult")
             .field("exec_result", &self.exec_result)
+            .field("trace", &self.trace)
             .finish()
     }
 }
 
-impl<E: Environment, V: scale::Decode> CallDryRunResult<E, V> {
+impl<E: Environment, V, Abi> CallDryRunResult<E, V, Abi> {
     /// Returns true if the dry-run execution resulted in an error.
     pub fn is_err(&self) -> bool {
         self.exec_result.result.is_err() || self.did_revert()
@@ -286,35 +320,7 @@ impl<E: Environment, V: scale::Decode> CallDryRunResult<E, V> {
             .unwrap_or_else(|call_err| panic!("Call dry-run failed: {call_err:?}"))
     }
 
-    /// Returns the [`MessageResult`] from the execution of the dry-run message call.
-    ///
-    /// # Panics
-    /// - if the dry-run message call failed to execute.
-    /// - if message result cannot be decoded into the expected return value type.
-    pub fn message_result(&self) -> MessageResult<V> {
-        let data = &self.exec_return_value().data;
-        scale::Decode::decode(&mut data.as_ref()).unwrap_or_else(|env_err| {
-            panic!(
-                "Decoding dry run result to ink! message return type failed: {env_err} {:?}",
-                self.exec_return_value()
-            )
-        })
-    }
-
-    /// Returns the decoded return value of the message from the dry-run.
-    ///
-    /// Panics if the value could not be decoded. The raw bytes can be accessed via
-    /// [`CallResult::return_data`].
-    pub fn return_value(self) -> V {
-        self.message_result()
-            .unwrap_or_else(|lang_err| {
-                panic!(
-                    "Encountered a `LangError` while decoding dry run result to ink! message: {lang_err:?}"
-                )
-            })
-    }
-
-    /// todo
+    /// Returns true if the message call reverted.
     pub fn did_revert(&self) -> bool {
         let res = self.exec_result.result.clone().expect("no result found");
         res.did_revert()
@@ -328,24 +334,62 @@ impl<E: Environment, V: scale::Decode> CallDryRunResult<E, V> {
     }
 }
 
-/// Result of the dry run of a contract call.
-pub struct InstantiateDryRunResult<E: Environment> {
-    /// The result of the dry run, contains debug messages if there were any.
-    pub contract_result: ContractInstantiateResultFor<E>,
-}
+impl<E: Environment, V: DecodeMessageResult<Abi>, Abi> CallDryRunResult<E, V, Abi> {
+    /// Returns the [`MessageResult`] from the execution of the dry-run message call.
+    ///
+    /// # Panics
+    /// - if the dry-run message call failed to execute.
+    /// - if message result cannot be decoded into the expected return value type.
+    pub fn message_result(&self) -> MessageResult<V> {
+        let data = &self.exec_return_value().data;
+        DecodeMessageResult::decode_output(data.as_ref(), self.did_revert()).unwrap_or_else(|env_err| {
+            panic!(
+                "Decoding dry run result to ink! message return type failed: {env_err:?} {:?}\n\n\
+                Attempt to stringify returned data: {:?}",
+                self.exec_return_value(),
+                String::from_utf8_lossy(&self.exec_return_value().data[..])
+            )
+        })
+    }
 
-impl<E: Environment> From<ContractInstantiateResultFor<E>>
-    for InstantiateDryRunResult<E>
-{
-    fn from(contract_result: ContractInstantiateResultFor<E>) -> Self {
-        Self { contract_result }
+    /// Returns the decoded return value of the message from the dry-run.
+    ///
+    /// Panics if the value could not be decoded. The raw bytes can be accessed via
+    /// [`CallResult::return_data`].
+    pub fn return_value(&self) -> V {
+        self.message_result()
+            .unwrap_or_else(|lang_err| {
+                panic!(
+                    "Encountered a `LangError` while decoding dry run result to ink! message: {lang_err:?}"
+                )
+            })
     }
 }
 
-impl<E: Environment> InstantiateDryRunResult<E> {
+/// Result of the dry run of a contract call.
+#[derive(Clone)]
+pub struct InstantiateDryRunResult<E: Environment, Abi> {
+    /// The result of the dry run, contains debug messages if there were any.
+    pub contract_result: ContractInstantiateResultFor<E>,
+    /// Phantom data for return type and its ABI encoding.
+    pub _marker: PhantomData<Abi>,
+}
+
+impl<E: Environment, Abi> From<ContractInstantiateResultFor<E>>
+    for InstantiateDryRunResult<E, Abi>
+{
+    fn from(contract_result: ContractInstantiateResultFor<E>) -> Self {
+        Self {
+            contract_result,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<E: Environment, Abi> InstantiateDryRunResult<E, Abi> {
     /// Returns true if the dry-run execution resulted in an error.
     pub fn is_err(&self) -> bool {
-        self.contract_result.result.is_err()
+        self.contract_result.result.is_err() || self.did_revert()
     }
 
     /// Returns the [`InstantiateReturnValue`] resulting from the dry-run message call.
@@ -363,10 +407,12 @@ impl<E: Environment> InstantiateDryRunResult<E> {
     /// # Panics
     /// - if the dry-run message instantiate failed to execute.
     /// - if message result cannot be decoded into the expected return value type.
-    pub fn constructor_result<V: scale::Decode>(&self) -> ConstructorResult<V> {
+    pub fn constructor_result<V: DecodeMessageResult<Abi>>(
+        &self,
+    ) -> ConstructorResult<V> {
         let data = &self.instantiate_return_value().result.data;
-        scale::Decode::decode(&mut data.as_ref()).unwrap_or_else(|env_err| {
-            panic!("Decoding dry run result to constructor return type failed: {env_err}")
+        DecodeMessageResult::decode_output(data.as_ref(), self.did_revert()).unwrap_or_else(|env_err| {
+            panic!("Decoding dry run result to constructor return type failed: {env_err:?}")
         })
     }
 
@@ -377,14 +423,14 @@ impl<E: Environment> InstantiateDryRunResult<E> {
         &self.instantiate_return_value().result.data
     }
 
-    /// todo
+    /// Returns true if the instantiation dry-run reverted.
     pub fn did_revert(&self) -> bool {
         let res = self.instantiate_return_value().clone().result;
         res.did_revert()
     }
 }
 
-impl<E> Debug for InstantiateDryRunResult<E>
+impl<E, Abi> Debug for InstantiateDryRunResult<E, Abi>
 where
     E: Environment,
     E::AccountId: Debug,

@@ -24,7 +24,6 @@ pub enum Backend {
     ///
     /// This runs a runtime emulator within `TestExternalities`
     /// the same process as the test.
-    #[cfg(any(test, feature = "sandbox"))]
     RuntimeOnly(RuntimeOnly),
 }
 
@@ -52,32 +51,33 @@ impl Node {
     ///
     /// Returns `None` if [`Self::Auto`] and `CONTRACTS_NODE_URL` not specified.
     pub fn url(&self) -> Option<String> {
-        std::env::var("CONTRACTS_NODE_URL").ok().or_else(|| {
+        let url = std::env::var("CONTRACTS_NODE_URL").ok().or_else(|| {
             match self {
                 Node::Auto => None,
                 Node::Url(url) => Some(url.clone()),
             }
-        })
+        });
+        tracing::debug!("[E2E] Using node url {:?}", url);
+        url
     }
 }
 
 /// The runtime emulator that should be used within `TestExternalities`
-#[cfg(any(test, feature = "sandbox"))]
 #[derive(Clone, Eq, PartialEq, Debug, darling::FromMeta)]
-pub enum RuntimeOnly {
-    #[darling(word)]
-    #[darling(skip)]
-    Default,
-    Sandbox(syn::Path),
+pub struct RuntimeOnly {
+    /// The sandbox runtime type (e.g., `ink_sandbox::DefaultSandbox`)
+    pub sandbox: syn::Path,
+    /// The client type implementing the backend traits (e.g.,
+    /// `ink_sandbox::SandboxClient`)
+    pub client: syn::Path,
 }
 
-#[cfg(any(test, feature = "sandbox"))]
-impl From<RuntimeOnly> for syn::Path {
-    fn from(value: RuntimeOnly) -> Self {
-        match value {
-            RuntimeOnly::Default => syn::parse_quote! { ::ink_e2e::DefaultSandbox },
-            RuntimeOnly::Sandbox(path) => path,
-        }
+impl RuntimeOnly {
+    pub fn runtime_path(&self) -> syn::Path {
+        self.sandbox.clone()
+    }
+    pub fn client_path(&self) -> syn::Path {
+        self.client.clone()
     }
 }
 
@@ -95,6 +95,17 @@ pub struct E2EConfig {
     /// The type of the architecture that should be used to run test.
     #[darling(default)]
     backend: Backend,
+    /// Features that are enabled in the contract during the build process.
+    /// todo add tests below in this file
+    #[darling(default)]
+    features: Vec<syn::LitStr>,
+    /// A replacement attribute for `#[test]`. Instead of `#[test]` the E2E code
+    /// generation will output this attribute.
+    ///
+    /// This can be used to supply e.g. `#[quicktest]`, thus transforming the
+    /// test into a fuzzing E2E test.
+    #[darling(default)]
+    replace_test_attr: Option<String>,
 }
 
 impl E2EConfig {
@@ -103,9 +114,20 @@ impl E2EConfig {
         self.environment.clone()
     }
 
+    /// Features for the contract build.
+    pub fn features(&self) -> Vec<String> {
+        self.features.iter().map(|ls| ls.value()).collect()
+    }
+
     /// The type of the architecture that should be used to run test.
     pub fn backend(&self) -> Backend {
         self.backend.clone()
+    }
+
+    /// A custom attribute which the code generation will output instead
+    /// of `#[test]`.
+    pub fn replace_test_attr(&self) -> Option<String> {
+        self.replace_test_attr.clone()
     }
 }
 
@@ -113,8 +135,8 @@ impl E2EConfig {
 mod tests {
     use super::*;
     use darling::{
-        ast::NestedMeta,
         FromMeta,
+        ast::NestedMeta,
     };
     use quote::quote;
 
@@ -122,7 +144,7 @@ mod tests {
     fn config_works_backend_runtime_only() {
         let input = quote! {
             environment = crate::CustomEnvironment,
-            backend(runtime_only),
+            backend(runtime_only(sandbox = ::ink_sandbox::DefaultSandbox, client = ::ink_sandbox::SandboxClient)),
         };
         let config =
             E2EConfig::from_list(&NestedMeta::parse_meta_list(input).unwrap()).unwrap();
@@ -132,7 +154,13 @@ mod tests {
             Some(syn::parse_quote! { crate::CustomEnvironment })
         );
 
-        assert_eq!(config.backend(), Backend::RuntimeOnly(RuntimeOnly::Default));
+        assert_eq!(
+            config.backend(),
+            Backend::RuntimeOnly(RuntimeOnly {
+                sandbox: syn::parse_quote! { ::ink_sandbox::DefaultSandbox },
+                client: syn::parse_quote! { ::ink_sandbox::SandboxClient },
+            })
+        );
     }
 
     #[test]
@@ -144,22 +172,29 @@ mod tests {
         let config =
             E2EConfig::from_list(&NestedMeta::parse_meta_list(input).unwrap()).unwrap();
 
-        assert_eq!(config.backend(), Backend::RuntimeOnly(RuntimeOnly::Default));
+        assert_eq!(
+            config.backend(),
+            Backend::RuntimeOnly(RuntimeOnly {
+                sandbox: syn::parse_quote! { ::ink_sandbox::DefaultSandbox },
+                client: syn::parse_quote! { ::ink_sandbox::SandboxClient },
+            })
+        );
     }
 
     #[test]
     fn config_works_runtime_only_with_custom_backend() {
         let input = quote! {
-            backend(runtime_only(sandbox = ::ink_e2e::DefaultSandbox)),
+            backend(runtime_only(sandbox = ::ink_sandbox::DefaultSandbox, client = ::ink_sandbox::SandboxClient)),
         };
         let config =
             E2EConfig::from_list(&NestedMeta::parse_meta_list(input).unwrap()).unwrap();
 
         assert_eq!(
             config.backend(),
-            Backend::RuntimeOnly(RuntimeOnly::Sandbox(
-                syn::parse_quote! { ::ink_e2e::DefaultSandbox }
-            ))
+            Backend::RuntimeOnly(RuntimeOnly {
+                sandbox: syn::parse_quote! { ::ink_sandbox::DefaultSandbox },
+                client: syn::parse_quote! { ::ink_sandbox::SandboxClient },
+            })
         );
     }
 
@@ -235,5 +270,16 @@ mod tests {
             }
             _ => panic!("Expected Backend::Node"),
         }
+    }
+
+    #[test]
+    fn config_works_test_attr_replacement() {
+        let input = quote! {
+            replace_test_attr = "#[quickcheck]"
+        };
+        let config =
+            E2EConfig::from_list(&NestedMeta::parse_meta_list(input).unwrap()).unwrap();
+
+        assert_eq!(config.replace_test_attr(), Some("#[quickcheck]".to_owned()));
     }
 }

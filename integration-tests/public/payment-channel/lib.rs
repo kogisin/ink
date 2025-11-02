@@ -41,20 +41,17 @@
 
 #[ink::contract]
 mod payment_channel {
-    use ink::{
-        H160,
-        U256,
-    };
+    use ink::U256;
 
     /// Struct for storing the payment channel details.
     /// The creator of the contract, i.e. the `sender`, can deposit funds to the payment
     /// channel while deploying the contract.
     #[ink(storage)]
     pub struct PaymentChannel {
-        /// The `H160` of the sender of the payment channel.
-        sender: H160,
-        /// The `H160` of the recipient of the payment channel.
-        recipient: H160,
+        /// The `Address` of the sender of the payment channel.
+        sender: Address,
+        /// The `Address` of the recipient of the payment channel.
+        recipient: Address,
         /// The `Timestamp` at which the contract expires. The field is optional.
         /// The contract never expires if set to `None`.
         expiration: Option<Timestamp>,
@@ -68,7 +65,7 @@ mod payment_channel {
 
     /// Errors that can occur upon calling this contract.
     #[derive(Debug, PartialEq, Eq)]
-    #[ink::scale_derive(Encode, Decode, TypeInfo)]
+    #[ink::error]
     pub enum Error {
         /// Returned if caller is not the `sender` while required to.
         CallerIsNotSender,
@@ -108,7 +105,7 @@ mod payment_channel {
         /// this. `sender` will be able to claim the remaining balance by calling
         /// `claim_timeout` after `expiration` has passed.
         #[ink(constructor)]
-        pub fn new(recipient: H160, close_duration: Timestamp) -> Self {
+        pub fn new(recipient: Address, close_duration: Timestamp) -> Self {
             Self {
                 sender: Self::env().caller(),
                 recipient,
@@ -227,13 +224,13 @@ mod payment_channel {
 
         /// Returns the `sender` of the contract.
         #[ink(message)]
-        pub fn get_sender(&self) -> H160 {
+        pub fn get_sender(&self) -> Address {
             self.sender
         }
 
         /// Returns the `recipient` of the contract.
         #[ink(message)]
-        pub fn get_recipient(&self) -> H160 {
+        pub fn get_recipient(&self) -> Address {
             self.recipient
         }
 
@@ -301,17 +298,17 @@ mod payment_channel {
             ink::env::test::default_accounts()
         }
 
-        fn set_next_caller(caller: H160) {
+        fn set_next_caller(caller: Address) {
             ink::env::test::set_caller(caller);
         }
 
-        fn set_account_balance(account: H160, balance: U256) {
-            ink::env::test::set_account_balance(account, balance);
+        fn set_contract_balance(addr: Address, balance: U256) {
+            ink::env::test::set_contract_balance(addr, balance);
         }
 
-        fn get_account_balance(account: H160) -> U256 {
-            ink::env::test::get_account_balance::<ink::env::DefaultEnvironment>(account)
-                .expect("Cannot get account balance")
+        fn get_contract_balance(addr: Address) -> U256 {
+            ink::env::test::get_contract_balance::<ink::env::DefaultEnvironment>(addr)
+                .expect("Cannot get contract balance")
         }
 
         fn advance_block() {
@@ -326,7 +323,7 @@ mod payment_channel {
                 + since_the_epoch.subsec_nanos() as u64 / 1_000_000_000
         }
 
-        fn get_dan() -> H160 {
+        fn get_dan() -> Address {
             // Use Dan's seed
             // `subkey inspect //Dan --scheme Ecdsa --output-type json | jq .secretSeed`
             let seed = hex_literal::hex!(
@@ -345,14 +342,14 @@ mod payment_channel {
             ink::primitives::AccountIdMapper::to_address(&account_id)
         }
 
-        fn contract_id() -> H160 {
+        fn contract_id() -> Address {
             let accounts = default_accounts();
             let contract_id = accounts.charlie;
             ink::env::test::set_callee(contract_id);
             contract_id
         }
 
-        fn sign(contract_id: H160, amount: U256) -> [u8; 65] {
+        fn sign(contract_id: Address, amount: U256) -> [u8; 65] {
             let encodable = (contract_id, amount);
             let mut hash =
                 <ink::env::hash::Sha2x256 as ink::env::hash::HashOutput>::Type::default(); // 256-bit buffer
@@ -376,8 +373,8 @@ mod payment_channel {
             let initial_balance = 10_000.into();
             let close_duration = 360_000;
             let mock_deposit_value = 1_000.into();
-            set_account_balance(accounts.alice, initial_balance);
-            set_account_balance(accounts.bob, initial_balance);
+            set_contract_balance(accounts.alice, initial_balance);
+            set_contract_balance(accounts.bob, initial_balance);
 
             // when
             // Push the new execution context with Alice as the caller and
@@ -386,7 +383,7 @@ mod payment_channel {
             set_next_caller(accounts.alice);
             let payment_channel = PaymentChannel::new(accounts.bob, close_duration);
             let contract_id = contract_id();
-            set_account_balance(contract_id, mock_deposit_value);
+            set_contract_balance(contract_id, mock_deposit_value);
 
             // then
             assert_eq!(payment_channel.get_balance(), mock_deposit_value);
@@ -401,14 +398,14 @@ mod payment_channel {
             let mock_deposit_value = 1_000.into();
             let amount = 500.into();
             let initial_balance = 10_000.into();
-            set_account_balance(accounts.alice, initial_balance);
-            set_account_balance(dan, initial_balance);
+            set_contract_balance(accounts.alice, initial_balance);
+            set_contract_balance(dan, initial_balance);
 
             // when
             set_next_caller(accounts.alice);
             let mut payment_channel = PaymentChannel::new(dan, close_duration);
             let contract_id = contract_id();
-            set_account_balance(contract_id, mock_deposit_value);
+            set_contract_balance(contract_id, mock_deposit_value);
             set_next_caller(dan);
             let signature = sign(contract_id, amount);
 
@@ -419,7 +416,7 @@ mod payment_channel {
                 accounts.alice,
                 amount,
             );
-            assert_eq!(get_account_balance(dan), initial_balance + amount);
+            assert_eq!(get_contract_balance(dan), initial_balance + amount);
         }
 
         #[ink::test]
@@ -432,14 +429,14 @@ mod payment_channel {
             let amount = 400.into();
             let unexpected_amount = amount + U256::from(1);
             let initial_balance = 10_000.into();
-            set_account_balance(accounts.alice, initial_balance);
-            set_account_balance(dan, initial_balance);
+            set_contract_balance(accounts.alice, initial_balance);
+            set_contract_balance(dan, initial_balance);
 
             // when
             set_next_caller(accounts.alice);
             let mut payment_channel = PaymentChannel::new(dan, close_duration);
             let contract_id = contract_id();
-            set_account_balance(contract_id, mock_deposit_value);
+            set_contract_balance(contract_id, mock_deposit_value);
             set_next_caller(dan);
             let signature = sign(contract_id, amount);
 
@@ -458,14 +455,14 @@ mod payment_channel {
             let mock_deposit_value = 1_000.into();
             let close_duration = 360_000;
             let amount = 500.into();
-            set_account_balance(accounts.alice, initial_balance);
-            set_account_balance(dan, initial_balance);
+            set_contract_balance(accounts.alice, initial_balance);
+            set_contract_balance(dan, initial_balance);
 
             // when
             set_next_caller(accounts.alice);
             let mut payment_channel = PaymentChannel::new(dan, close_duration);
             let contract_id = contract_id();
-            set_account_balance(contract_id, mock_deposit_value);
+            set_contract_balance(contract_id, mock_deposit_value);
 
             set_next_caller(dan);
             let signature = sign(contract_id, amount);
@@ -475,7 +472,7 @@ mod payment_channel {
 
             // then
             assert_eq!(payment_channel.get_balance(), amount);
-            assert_eq!(get_account_balance(dan), initial_balance + amount);
+            assert_eq!(get_contract_balance(dan), initial_balance + amount);
         }
 
         #[ink::test]
@@ -488,14 +485,14 @@ mod payment_channel {
             let amount = 400.into();
             let unexpected_amount = amount + U256::from(1);
             let mock_deposit_value = 1_000.into();
-            set_account_balance(accounts.alice, initial_balance);
-            set_account_balance(dan, initial_balance);
+            set_contract_balance(accounts.alice, initial_balance);
+            set_contract_balance(dan, initial_balance);
 
             // when
             set_next_caller(accounts.alice);
             let mut payment_channel = PaymentChannel::new(dan, close_duration);
             let contract_id = contract_id();
-            set_account_balance(contract_id, mock_deposit_value);
+            set_contract_balance(contract_id, mock_deposit_value);
             set_next_caller(dan);
             let signature = sign(contract_id, amount);
 
@@ -512,14 +509,14 @@ mod payment_channel {
             let initial_balance = 10_000.into();
             let mock_deposit_value = 1_000.into();
             let close_duration = 1;
-            set_account_balance(accounts.alice, initial_balance);
-            set_account_balance(accounts.bob, initial_balance);
+            set_contract_balance(accounts.alice, initial_balance);
+            set_contract_balance(accounts.bob, initial_balance);
 
             // when
             set_next_caller(accounts.alice);
             let mut payment_channel = PaymentChannel::new(accounts.bob, close_duration);
             let contract_id = contract_id();
-            set_account_balance(contract_id, mock_deposit_value);
+            set_contract_balance(contract_id, mock_deposit_value);
 
             payment_channel
                 .start_sender_close()
@@ -538,14 +535,14 @@ mod payment_channel {
             let initial_balance = 10_000.into();
             let close_duration = 1;
             let mock_deposit_value = 1_000.into();
-            set_account_balance(accounts.alice, initial_balance);
-            set_account_balance(accounts.bob, initial_balance);
+            set_contract_balance(accounts.alice, initial_balance);
+            set_contract_balance(accounts.bob, initial_balance);
 
             // when
             set_next_caller(accounts.alice);
             let contract_id = contract_id();
             let mut payment_channel = PaymentChannel::new(accounts.bob, close_duration);
-            set_account_balance(contract_id, mock_deposit_value);
+            set_contract_balance(contract_id, mock_deposit_value);
 
             payment_channel
                 .start_sender_close()
@@ -560,7 +557,7 @@ mod payment_channel {
                 mock_deposit_value,
             );
             assert_eq!(
-                get_account_balance(accounts.alice),
+                get_contract_balance(accounts.alice),
                 initial_balance + mock_deposit_value
             );
         }
@@ -572,14 +569,14 @@ mod payment_channel {
             let initial_balance = 10_000.into();
             let mock_deposit_value = 1_000.into();
             let close_duration = 360_000;
-            set_account_balance(accounts.alice, initial_balance);
-            set_account_balance(accounts.bob, initial_balance);
+            set_contract_balance(accounts.alice, initial_balance);
+            set_contract_balance(accounts.bob, initial_balance);
 
             // when
             set_next_caller(accounts.alice);
             let contract_id = contract_id();
             let payment_channel = PaymentChannel::new(accounts.bob, close_duration);
-            set_account_balance(contract_id, mock_deposit_value);
+            set_contract_balance(contract_id, mock_deposit_value);
 
             // then
             assert_eq!(payment_channel.get_sender(), accounts.alice);

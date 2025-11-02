@@ -19,10 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          fetch-depth: 100
+          fetch-depth: 1
 
+      # todo doesn't work, fails in ci
       - name: Download Docs
         uses: ./.github/download-artifact
         with:
@@ -69,6 +70,6 @@ jobs:
           # job as failed subsequently.
           # We don't want to mark the entire job as failed if there's nothing to
           # publish though, hence the `|| true`.
-          git commit -m "Updated docs for ${{ github.event.workflow_run.head_branch }}} and pushed to gh-pages" || true
+          git commit -m "Updated docs for ${{ github.event.workflow_run.head_branch }} and pushed to gh-pages" || true
           git push origin gh-pages --force
           rm -rf .git/ ./*

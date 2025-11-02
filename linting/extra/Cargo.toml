@@ -17,23 +17,23 @@ include = ["Cargo.toml", "*.rs", "LICENSE"]
 crate-type = ["cdylib"]
 
 [dependencies]
-dylint_linting = "4.0.1"
+dylint_linting = "4.1.0"
 if_chain = "1.0.2"
 log = "0.4.14"
 regex = "1.5.4"
 ink_linting_utils = { workspace = true }
-ink_env = { version = "=6.0.0-alpha", path = "../../crates/env" }
+ink_env = { version = "=6.0.0-beta", path = "../../crates/env" }
 
 [dev-dependencies]
-dylint_testing = "4.0.1"
+dylint_testing = "4.1.0"
 
 # The ink! dependencies used to build the `ui` tests and to compile the linting
-# library with `--default-features=std` (see the `features` section bellow).
+# library with `--default-features=std` (see the `features` section below).
 #
 # These cannot be moved to the workspace level because `cargo` does not provide
 # the `[[workspace.dev-dependencies]]` directive.
-ink = { version = "=6.0.0-alpha", path = "../../crates/ink" }
-ink_primitives = { version = "=6.0.0-alpha", path = "../../crates/primitives" }
+ink = { version = "=6.0.0-beta", path = "../../crates/ink" }
+ink_primitives = { version = "=6.0.0-beta", path = "../../crates/primitives" }
 
 # For the moment we have to include the tests as examples and
 # then use `dylint_testing::ui_test_examples`.

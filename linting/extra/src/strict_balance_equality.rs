@@ -14,20 +14,18 @@
 
 use if_chain::if_chain;
 use ink_linting_utils::{
-    clippy::{
-        diagnostics::span_lint_hir_and_then,
-        match_any_def_paths,
-        match_def_path,
-    },
+    clippy::diagnostics::span_lint_hir_and_then,
     expand_unnamed_consts,
     find_contract_impl_id,
+    match_any_def_paths,
+    match_def_path,
 };
 use rustc_errors::Applicability;
 use rustc_hir::{
     self as hir,
-    def_id::DefId,
     AssocItemKind,
     ItemKind,
+    def_id::DefId,
 };
 use rustc_index::bit_set::DenseBitSet;
 use rustc_lint::{
@@ -36,8 +34,6 @@ use rustc_lint::{
 };
 use rustc_middle::{
     mir::{
-        traversal,
-        visit::Visitor,
         BasicBlock,
         BinOp,
         Body,
@@ -54,6 +50,8 @@ use rustc_middle::{
         Terminator,
         TerminatorEdges,
         TerminatorKind,
+        traversal,
+        visit::Visitor,
     },
     ty as mir_ty,
 };
@@ -63,8 +61,8 @@ use rustc_session::{
     declare_lint_pass,
 };
 use rustc_span::{
-    source_map::Spanned,
     Span,
+    source_map::Spanned,
 };
 use std::collections::{
     HashMap,
@@ -581,7 +579,7 @@ impl StrictBalanceEquality {
                 let node = fn_mir.source_scopes[scope]
                     .local_data
                     .as_ref()
-                    .assert_crate_local()
+                    .unwrap_crate_local()
                     .lint_root;
                 then {
                     let sugg_span = Span::new(

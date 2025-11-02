@@ -35,21 +35,21 @@ use core::{
     marker::PhantomData,
 };
 use scale_info::{
+    IntoPortable,
+    Registry,
+    TypeInfo,
     form::{
         Form,
         MetaForm,
         PortableForm,
     },
     meta_type,
-    IntoPortable,
-    Registry,
-    TypeInfo,
 };
 use schemars::JsonSchema;
 use serde::{
-    de::DeserializeOwned,
     Deserialize,
     Serialize,
+    de::DeserializeOwned,
 };
 #[cfg(feature = "std")]
 use std::{
@@ -254,13 +254,6 @@ where
     }
 }
 
-impl<S> ContractSpecBuilder<MetaForm, S> {
-    /// Collect metadata for all events linked into the contract.
-    pub fn collect_events(self) -> Self {
-        self.events(crate::collect_events())
-    }
-}
-
 impl<F> ContractSpecBuilder<F, Valid>
 where
     F: Form,
@@ -287,7 +280,7 @@ where
             "only one default message is allowed"
         );
 
-        let max_topics = self.spec.environment.max_event_topics;
+        const MAX_TOPICS: usize = 4;
         let events_exceeding_max_topics_limit = self
             .spec
             .events
@@ -296,7 +289,7 @@ where
                 let signature_topic = if e.signature_topic.is_some() { 1 } else { 0 };
                 let topics_count =
                     signature_topic + e.args.iter().filter(|a| a.indexed).count();
-                if topics_count > max_topics {
+                if topics_count > MAX_TOPICS {
                     Some(format!(
                         "`{}::{}` ({} topics)",
                         e.module_path, e.label, topics_count
@@ -308,7 +301,7 @@ where
             .collect::<Vec<_>>();
         assert!(
             events_exceeding_max_topics_limit.is_empty(),
-            "maximum of {max_topics} event topics exceeded: {}",
+            "maximum of {MAX_TOPICS} event topics exceeded: {}",
             events_exceeding_max_topics_limit.join(", ")
         );
 
@@ -662,10 +655,8 @@ mod state {
     pub struct Timestamp;
     /// Type state for the `BlockNumber` type of the environment.
     pub struct BlockNumber;
-    /// Type state for the `ChainExtension` type of the environment.
-    pub struct ChainExtension;
-    /// Type state for the max number of topics specified in the environment.
-    pub struct MaxEventTopics;
+    /// Type state for the native to eth ratio specified in the environment.
+    pub struct NativeToEthRatio;
     /// Type state for the size of the static buffer configured via environment variable.`
     pub struct BufferSize;
 }
@@ -1557,8 +1548,7 @@ where
     hash: TypeSpec<F>,
     timestamp: TypeSpec<F>,
     block_number: TypeSpec<F>,
-    chain_extension: TypeSpec<F>,
-    max_event_topics: usize,
+    native_to_eth_ratio: u32,
     static_buffer_size: usize,
 }
 
@@ -1574,8 +1564,7 @@ where
             hash: Default::default(),
             timestamp: Default::default(),
             block_number: Default::default(),
-            chain_extension: Default::default(),
-            max_event_topics: Default::default(),
+            native_to_eth_ratio: Default::default(),
             static_buffer_size: Default::default(),
         }
     }
@@ -1591,8 +1580,7 @@ impl IntoPortable for EnvironmentSpec {
             hash: self.hash.into_portable(registry),
             timestamp: self.timestamp.into_portable(registry),
             block_number: self.block_number.into_portable(registry),
-            chain_extension: self.chain_extension.into_portable(registry),
-            max_event_topics: self.max_event_topics,
+            native_to_eth_ratio: self.native_to_eth_ratio,
             static_buffer_size: self.static_buffer_size,
         }
     }
@@ -1623,13 +1611,9 @@ where
     pub fn block_number(&self) -> &TypeSpec<F> {
         &self.block_number
     }
-    /// Returns the `ChainExtension` type of the environment.
-    pub fn chain_extension(&self) -> &TypeSpec<F> {
-        &self.chain_extension
-    }
-    /// Returns the `MAX_EVENT_TOPICS` value of the environment.
-    pub fn max_event_topics(&self) -> usize {
-        self.max_event_topics
+    /// Returns the `NATIVE_TO_ETH_RATIO` value of the environment.
+    pub fn native_to_eth_ratio(&self) -> u32 {
+        self.native_to_eth_ratio
     }
 }
 
@@ -1647,8 +1631,7 @@ where
         Missing<state::Hash>,
         Missing<state::Timestamp>,
         Missing<state::BlockNumber>,
-        Missing<state::ChainExtension>,
-        Missing<state::MaxEventTopics>,
+        Missing<state::NativeToEthRatio>,
         Missing<state::BufferSize>,
     > {
         EnvironmentSpecBuilder {
@@ -1661,18 +1644,18 @@ where
 /// An environment specification builder.
 #[allow(clippy::type_complexity)]
 #[must_use]
-pub struct EnvironmentSpecBuilder<F, A, B, H, T, BN, C, M, BS>
+pub struct EnvironmentSpecBuilder<F, A, B, H, T, BN, NTER, BS>
 where
     F: Form,
     TypeSpec<F>: Default,
     EnvironmentSpec<F>: Default,
 {
     spec: EnvironmentSpec<F>,
-    marker: PhantomData<fn() -> (A, B, H, T, BN, C, M, BS)>,
+    marker: PhantomData<fn() -> (A, B, H, T, BN, NTER, BS)>,
 }
 
-impl<F, B, H, T, BN, C, M, BS>
-    EnvironmentSpecBuilder<F, Missing<state::AccountId>, B, H, T, BN, C, M, BS>
+impl<F, B, H, T, BN, NTER, BS>
+    EnvironmentSpecBuilder<F, Missing<state::AccountId>, B, H, T, BN, NTER, BS>
 where
     F: Form,
     TypeSpec<F>: Default,
@@ -1682,7 +1665,7 @@ where
     pub fn account_id(
         self,
         account_id: TypeSpec<F>,
-    ) -> EnvironmentSpecBuilder<F, state::AccountId, B, H, T, BN, C, M, BS> {
+    ) -> EnvironmentSpecBuilder<F, state::AccountId, B, H, T, BN, NTER, BS> {
         EnvironmentSpecBuilder {
             spec: EnvironmentSpec {
                 account_id,
@@ -1693,8 +1676,8 @@ where
     }
 }
 
-impl<F, A, H, T, BN, C, M, BS>
-    EnvironmentSpecBuilder<F, A, Missing<state::Balance>, H, T, BN, C, M, BS>
+impl<F, A, H, T, BN, NTER, BS>
+    EnvironmentSpecBuilder<F, A, Missing<state::Balance>, H, T, BN, NTER, BS>
 where
     F: Form,
     TypeSpec<F>: Default,
@@ -1704,7 +1687,7 @@ where
     pub fn balance(
         self,
         balance: TypeSpec<F>,
-    ) -> EnvironmentSpecBuilder<F, A, state::Balance, H, T, BN, C, M, BS> {
+    ) -> EnvironmentSpecBuilder<F, A, state::Balance, H, T, BN, NTER, BS> {
         EnvironmentSpecBuilder {
             spec: EnvironmentSpec {
                 balance,
@@ -1715,8 +1698,8 @@ where
     }
 }
 
-impl<F, A, B, T, BN, C, M, BS>
-    EnvironmentSpecBuilder<F, A, B, Missing<state::Hash>, T, BN, C, M, BS>
+impl<F, A, B, T, BN, NTER, BS>
+    EnvironmentSpecBuilder<F, A, B, Missing<state::Hash>, T, BN, NTER, BS>
 where
     F: Form,
     TypeSpec<F>: Default,
@@ -1726,7 +1709,7 @@ where
     pub fn hash(
         self,
         hash: TypeSpec<F>,
-    ) -> EnvironmentSpecBuilder<F, A, B, state::Hash, T, BN, C, M, BS> {
+    ) -> EnvironmentSpecBuilder<F, A, B, state::Hash, T, BN, NTER, BS> {
         EnvironmentSpecBuilder {
             spec: EnvironmentSpec { hash, ..self.spec },
             marker: PhantomData,
@@ -1734,8 +1717,8 @@ where
     }
 }
 
-impl<F, A, B, H, BN, C, M, BS>
-    EnvironmentSpecBuilder<F, A, B, H, Missing<state::Timestamp>, BN, C, M, BS>
+impl<F, A, B, H, BN, NTER, BS>
+    EnvironmentSpecBuilder<F, A, B, H, Missing<state::Timestamp>, BN, NTER, BS>
 where
     F: Form,
     TypeSpec<F>: Default,
@@ -1745,7 +1728,7 @@ where
     pub fn timestamp(
         self,
         timestamp: TypeSpec<F>,
-    ) -> EnvironmentSpecBuilder<F, A, B, H, state::Timestamp, BN, C, M, BS> {
+    ) -> EnvironmentSpecBuilder<F, A, B, H, state::Timestamp, BN, NTER, BS> {
         EnvironmentSpecBuilder {
             spec: EnvironmentSpec {
                 timestamp,
@@ -1756,8 +1739,8 @@ where
     }
 }
 
-impl<F, A, B, H, T, C, M, BS>
-    EnvironmentSpecBuilder<F, A, B, H, T, Missing<state::BlockNumber>, C, M, BS>
+impl<F, A, B, H, T, NTER, BS>
+    EnvironmentSpecBuilder<F, A, B, H, T, Missing<state::BlockNumber>, NTER, BS>
 where
     F: Form,
     TypeSpec<F>: Default,
@@ -1767,7 +1750,7 @@ where
     pub fn block_number(
         self,
         block_number: TypeSpec<F>,
-    ) -> EnvironmentSpecBuilder<F, A, B, H, T, state::BlockNumber, C, M, BS> {
+    ) -> EnvironmentSpecBuilder<F, A, B, H, T, state::BlockNumber, NTER, BS> {
         EnvironmentSpecBuilder {
             spec: EnvironmentSpec {
                 block_number,
@@ -1778,21 +1761,21 @@ where
     }
 }
 
-impl<F, A, B, H, T, BN, M, BS>
-    EnvironmentSpecBuilder<F, A, B, H, T, BN, Missing<state::ChainExtension>, M, BS>
+impl<F, A, B, H, T, BN, BS>
+    EnvironmentSpecBuilder<F, A, B, H, T, BN, Missing<state::NativeToEthRatio>, BS>
 where
     F: Form,
     TypeSpec<F>: Default,
     EnvironmentSpec<F>: Default,
 {
-    /// Sets the `ChainExtension` type of the environment.
-    pub fn chain_extension(
+    /// Sets the `NATIVE_TO_ETH_RATIO` value of the environment.
+    pub fn native_to_eth_ratio(
         self,
-        chain_extension: TypeSpec<F>,
-    ) -> EnvironmentSpecBuilder<F, A, B, H, T, BN, state::ChainExtension, M, BS> {
+        native_to_eth_ratio: u32,
+    ) -> EnvironmentSpecBuilder<F, A, B, H, T, BN, state::NativeToEthRatio, BS> {
         EnvironmentSpecBuilder {
             spec: EnvironmentSpec {
-                chain_extension,
+                native_to_eth_ratio,
                 ..self.spec
             },
             marker: PhantomData,
@@ -1800,30 +1783,8 @@ where
     }
 }
 
-impl<F, A, B, H, T, BN, C, BS>
-    EnvironmentSpecBuilder<F, A, B, H, T, BN, C, Missing<state::MaxEventTopics>, BS>
-where
-    F: Form,
-    TypeSpec<F>: Default,
-    EnvironmentSpec<F>: Default,
-{
-    /// Sets the `MAX_EVENT_TOPICS` value of the environment.
-    pub fn max_event_topics(
-        self,
-        max_event_topics: usize,
-    ) -> EnvironmentSpecBuilder<F, A, B, H, T, BN, C, state::MaxEventTopics, BS> {
-        EnvironmentSpecBuilder {
-            spec: EnvironmentSpec {
-                max_event_topics,
-                ..self.spec
-            },
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<F, A, B, H, T, BN, C, M>
-    EnvironmentSpecBuilder<F, A, B, H, T, BN, C, M, Missing<state::BufferSize>>
+impl<F, A, B, H, T, BN, NTER>
+    EnvironmentSpecBuilder<F, A, B, H, T, BN, NTER, Missing<state::BufferSize>>
 where
     F: Form,
     TypeSpec<F>: Default,
@@ -1833,7 +1794,7 @@ where
     pub fn static_buffer_size(
         self,
         static_buffer_size: usize,
-    ) -> EnvironmentSpecBuilder<F, A, B, H, T, BN, C, M, state::BufferSize> {
+    ) -> EnvironmentSpecBuilder<F, A, B, H, T, BN, NTER, state::BufferSize> {
         EnvironmentSpecBuilder {
             spec: EnvironmentSpec {
                 static_buffer_size,
@@ -1852,8 +1813,7 @@ impl<F>
         state::Hash,
         state::Timestamp,
         state::BlockNumber,
-        state::ChainExtension,
-        state::MaxEventTopics,
+        state::NativeToEthRatio,
         state::BufferSize,
     >
 where

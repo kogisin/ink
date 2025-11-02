@@ -17,26 +17,24 @@
 mod dispatch;
 mod env;
 mod implies_return;
-mod solidity_compat;
+pub mod sol;
 mod trait_def;
 pub mod utils;
 
 pub use self::{
     dispatch::{
-        deny_payment,
         ContractCallBuilder,
         DispatchInput,
+        DispatchInputSol,
         DispatchOutput,
+        DispatchOutputSol,
+        deny_payment,
     },
     env::{
         Env,
         StaticEnv,
     },
     implies_return::ImpliesReturn,
-    solidity_compat::{
-        const_format,
-        sol_selector_bytes,
-    },
     trait_def::{
         TraitCallBuilder,
         TraitCallForwarder,

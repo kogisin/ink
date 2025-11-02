@@ -20,16 +20,15 @@
 mod call_builder {
     use constructors_return_value::ConstructorsReturnValueRef;
     use ink::{
+        H256,
         env::{
+            DefaultEnvironment,
             call::{
-                build_call,
                 ExecutionInput,
                 Selector,
+                build_call,
             },
-            DefaultEnvironment,
         },
-        H160,
-        H256,
     };
 
     #[ink(storage)]
@@ -53,7 +52,7 @@ mod call_builder {
         #[ink(message)]
         pub fn call(
             &mut self,
-            address: H160,
+            address: Address,
             selector: [u8; 4],
         ) -> Option<ink::LangError> {
             let result = build_call::<DefaultEnvironment>()
@@ -81,7 +80,7 @@ mod call_builder {
         /// This message does not allow the caller to handle any `LangErrors`, for that
         /// use the `call` message instead.
         #[ink(message)]
-        pub fn invoke(&mut self, address: H160, selector: [u8; 4]) {
+        pub fn invoke(&mut self, address: Address, selector: [u8; 4]) {
             use ink::env::call::build_call;
 
             build_call::<DefaultEnvironment>()
@@ -116,7 +115,7 @@ mod call_builder {
 
             let result = params
                 .try_instantiate()
-                .expect("Error from the Contracts pallet.");
+                .expect("Error from the `pallet-revive`.");
 
             match result {
                 Ok(_) => None,
@@ -143,7 +142,7 @@ mod call_builder {
             init_value: bool,
         ) -> Option<
             Result<
-                Result<H160, constructors_return_value::ConstructorError>,
+                Result<Address, constructors_return_value::ConstructorError>,
                 ink::LangError,
             >,
         > {
@@ -260,7 +259,9 @@ mod call_builder {
             let call_result = client.call(&ink_e2e::bob(), &call).dry_run().await?;
             assert!(call_result.did_revert());
             let err_msg = String::from_utf8_lossy(call_result.return_data());
-            assert!(err_msg.contains("Cross-contract call failed with CouldNotReadInput"));
+            assert!(
+                err_msg.contains("Cross-contract call failed with CouldNotReadInput")
+            );
 
             Ok(())
         }
@@ -379,9 +380,9 @@ mod call_builder {
             let call_result = client.call(&origin, &call).dry_run().await?;
             assert!(call_result.did_revert());
             let err_msg = String::from_utf8_lossy(call_result.return_data());
-            assert!(err_msg.contains(
-                "The callee reverted, but did not encode an error in the output buffer."
-            ));
+            // The callee reverted, but did not encode an error in the output buffer.
+            // So the output buffer couldn't be decoded.
+            assert!(err_msg.contains("Decode(Error)"));
 
             Ok(())
         }
@@ -424,7 +425,7 @@ mod call_builder {
 
             assert!(
                 matches!(call_result, Some(Ok(_))),
-                "Call to falliable constructor failed, when it should have succeeded."
+                "Call to fallible constructor failed, when it should have succeeded."
             );
 
             Ok(())
@@ -513,9 +514,9 @@ mod call_builder {
             let call_result = client.call(&origin, &call).dry_run().await?;
             assert!(call_result.did_revert());
             let err_msg = String::from_utf8_lossy(call_result.return_data());
-            assert!(err_msg.contains(
-                "The callee reverted, but did not encode an error in the output buffer."
-            ));
+            // The callee reverted, but did not encode an error in the output buffer.
+            // So the output buffer couldn't be decoded.
+            assert!(err_msg.contains("Decode(Error)"));
 
             Ok(())
         }

@@ -1,8 +1,8 @@
 [package]
 name = "trait-incrementer-caller"
-version = "6.0.0-alpha"
+version = "6.0.0-beta"
 authors = ["Use Ink <ink@use.ink>"]
-edition = "2021"
+edition = "2024"
 publish = false
 
 [dependencies]
@@ -31,3 +31,6 @@ ink-as-dependency = []
 members = [
     "contracts/incrementer",
 ]
+
+[package.metadata.ink-lang]
+abi = "ink"

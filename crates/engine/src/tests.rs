@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
-    ext::{
-        Engine,
-        Error,
-    },
-    types::H160,
+use crate::ext::{
+    Engine,
+    Error,
 };
-use ink_primitives::U256;
+use ink_primitives::{
+    Address,
+    U256,
+};
 use secp256k1::{
-    ecdsa::RecoverableSignature,
     Message,
     PublicKey,
-    SecretKey,
     SECP256K1,
+    SecretKey,
+    ecdsa::RecoverableSignature,
 };
 
 /// The public methods of the `contracts` pallet write their result into an
@@ -42,7 +42,7 @@ fn get_buffer() -> [u8; 1024] {
 #[test]
 fn store_load_clear() {
     let mut engine = Engine::new();
-    engine.set_callee(H160::from([1; 20]));
+    engine.set_callee(Address::from([1; 20]));
     let key: &[u8; 32] = &[0x42; 32];
     let res = engine.get_storage(key);
     assert_eq!(res, Err(Error::KeyNotFound));
@@ -61,7 +61,7 @@ fn store_load_clear() {
 fn setting_getting_balance() {
     // given
     let mut engine = Engine::new();
-    let addr = H160::from([1; 20]);
+    let addr = Address::from([1; 20]);
     let balance = 1337.into();
     engine.set_callee(addr);
     engine.set_balance(addr, balance);
@@ -80,7 +80,7 @@ fn setting_getting_balance() {
 fn setting_getting_caller() {
     // given
     let mut engine = Engine::new();
-    let caller = H160::from([1u8; 20]);
+    let caller = Address::from([1u8; 20]);
 
     // when
     engine.set_caller(caller);
@@ -96,7 +96,7 @@ fn setting_getting_caller() {
 fn address() {
     // given
     let mut engine = Engine::new();
-    let addr = H160::from([1; 20]);
+    let addr = Address::from([1; 20]);
     engine.set_callee(addr);
 
     // when
@@ -111,8 +111,8 @@ fn address() {
 fn transfer() {
     // given
     let mut engine = Engine::new();
-    let alice = H160::from([1; 20]);
-    let bob = H160::from([2; 20]);
+    let alice = Address::from([1; 20]);
+    let bob = Address::from([2; 20]);
     engine.set_callee(alice);
     engine.set_balance(alice, 1337.into());
 
@@ -129,18 +129,19 @@ fn transfer() {
 fn events() {
     // given
     let mut engine = Engine::new();
-    let topics_count: scale::Compact<u32> = scale::Compact(2u32);
-    let mut enc_topics_count = scale::Encode::encode(&topics_count);
-    let topic1 = vec![12u8, 13];
-    let topic2 = vec![14u8, 15];
+    let topic1 = [
+        12, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ];
+    let topic2 = [
+        14, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ];
     let data = &vec![21, 22, 23];
 
     // when
-    let mut enc_topics_info: Vec<u8> = Vec::new();
-    enc_topics_info.append(&mut enc_topics_count);
-    enc_topics_info.append(&mut topic1.clone());
-    enc_topics_info.append(&mut topic2.clone());
-    engine.deposit_event(&enc_topics_info, data);
+    let enc_topics = vec![topic1, topic2];
+    engine.deposit_event(&enc_topics, data);
 
     // then
     let mut events = engine.get_emitted_events();

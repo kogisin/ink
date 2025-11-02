@@ -26,10 +26,12 @@ macro_rules! impl_as_ref_for_generator {
     };
 }
 
+#[macro_use]
+mod macros;
+
 mod arg_list;
 mod as_dependency;
 mod blake2b;
-mod chain_extension;
 mod contract;
 mod dispatch;
 mod env;
@@ -38,11 +40,13 @@ mod ink_test;
 mod item_impls;
 mod metadata;
 mod selector;
-mod solidity;
+mod sol;
 mod storage;
 mod storage_item;
 mod trait_def;
 
+#[cfg(any(ink_abi = "sol", ink_abi = "all"))]
+pub use self::sol::metadata::SolidityMetadata;
 pub use self::{
     arg_list::{
         generate_argument_list,
@@ -56,7 +60,6 @@ pub use self::{
     },
     as_dependency::ContractReference,
     blake2b::Blake2x256,
-    chain_extension::ChainExtension,
     contract::Contract,
     dispatch::Dispatch,
     env::Env,
@@ -64,8 +67,8 @@ pub use self::{
     ink_test::InkTest,
     item_impls::ItemImpls,
     metadata::{
-        generate_type_spec,
         Metadata,
+        generate_type_spec,
     },
     selector::{
         SelectorBytes,

@@ -12,36 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use ink_primitives::Address;
+use pallet_revive_uapi::CallFlags;
+
 use crate::{
+    Error,
     call::{
+        CallBuilder,
+        CallParams,
+        ExecutionInput,
         common::{
             ReturnType,
             Set,
             Unset,
         },
-        execution::EmptyArgumentList,
+        execution::{
+            EmptyArgumentList,
+            EncodeArgsWith,
+        },
         utils::DecodeMessageResult,
-        CallBuilder,
-        CallParams,
-        ExecutionInput,
     },
     types::Environment,
-    Error,
 };
-use ink_primitives::{
-    reflect::{
-        AbiDecodeWith,
-        AbiEncodeWith,
-    },
-    H160,
-};
-use pallet_revive_uapi::CallFlags;
 
 /// The `delegatecall` call type. Performs a call with the given code hash.
 #[derive(Clone)]
 pub struct DelegateCall {
     // todo comments please
-    address: H160,
+    address: Address,
     flags: CallFlags,
     ref_time_limit: u64,
     proof_size_limit: u64,
@@ -51,7 +49,7 @@ pub struct DelegateCall {
 
 impl DelegateCall {
     /// Returns a clean builder for [`DelegateCall`]
-    pub const fn new(address: H160) -> Self {
+    pub const fn new(address: Address) -> Self {
         DelegateCall {
             address,
             flags: CallFlags::empty(),
@@ -62,7 +60,7 @@ impl DelegateCall {
     }
 
     /// Sets the `address` to perform a delegate call with.
-    pub fn address(self, address: H160) -> Self {
+    pub fn address(self, address: Address) -> Self {
         DelegateCall {
             address,
             flags: CallFlags::empty(),
@@ -78,7 +76,7 @@ where
     E: Environment,
 {
     /// Sets the `address` to perform a delegate call with.
-    pub fn address(self, address: H160) -> Self {
+    pub fn address(self, address: Address) -> Self {
         let call_type = self.call_type.value();
         CallBuilder {
             call_type: Set(DelegateCall {
@@ -133,8 +131,8 @@ impl<E, RetType, Abi>
     >
 where
     E: Environment,
-    EmptyArgumentList<Abi>: AbiEncodeWith<Abi>,
-    (): AbiDecodeWith<Abi> + DecodeMessageResult<Abi>,
+    EmptyArgumentList<Abi>: EncodeArgsWith<Abi>,
+    (): DecodeMessageResult<Abi>,
     Abi: Default,
 {
     /// Finalizes the call builder to call a function.
@@ -157,8 +155,8 @@ impl<E, Abi>
     >
 where
     E: Environment,
-    EmptyArgumentList<Abi>: AbiEncodeWith<Abi>,
-    (): AbiDecodeWith<Abi> + DecodeMessageResult<Abi>,
+    EmptyArgumentList<Abi>: EncodeArgsWith<Abi>,
+    (): DecodeMessageResult<Abi>,
     Abi: Default,
 {
     /// Invokes the cross-chain function call using Delegate Call semantics.
@@ -176,8 +174,8 @@ where
     ///
     /// # Note
     ///
-    /// On failure this an [`ink::env::Error`][`crate::Error`] which can be handled by the
-    /// caller.
+    /// On failure this returns an [`ink::env::Error`][`crate::Error`] which can be
+    /// handled by the caller.
     pub fn try_invoke(self) -> Result<ink_primitives::MessageResult<()>, Error> {
         self.params().try_invoke()
     }
@@ -187,8 +185,8 @@ impl<E, Args, R, Abi>
     CallBuilder<E, Set<DelegateCall>, Set<ExecutionInput<Args, Abi>>, Set<ReturnType<R>>>
 where
     E: Environment,
-    Args: AbiEncodeWith<Abi>,
-    R: AbiDecodeWith<Abi> + DecodeMessageResult<Abi>,
+    Args: EncodeArgsWith<Abi>,
+    R: DecodeMessageResult<Abi>,
 {
     /// Invokes the cross-chain function call using Delegate Call semantics and returns
     /// the result.
@@ -227,7 +225,7 @@ where
 
     /// Returns the contract address which we use to perform a delegate call.
     #[inline]
-    pub fn address(&self) -> &H160 {
+    pub fn address(&self) -> &Address {
         &self.call_type.address
     }
 
@@ -253,8 +251,8 @@ where
 impl<E, Args, R, Abi> CallParams<E, DelegateCall, Args, R, Abi>
 where
     E: Environment,
-    Args: AbiEncodeWith<Abi>,
-    R: AbiDecodeWith<Abi> + DecodeMessageResult<Abi>,
+    Args: EncodeArgsWith<Abi>,
+    R: DecodeMessageResult<Abi>,
 {
     /// Invoke the contract using Delegate Call semantics with the given built-up call
     /// parameters.

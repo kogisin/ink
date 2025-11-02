@@ -12,15 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::arithmetic::AtLeast32BitUnsigned;
-use alloy_sol_types::{
-    private::{
-        Address as SolAddress,
-        FixedBytes,
-    },
-    sol_data,
-    SolValue,
-};
 use core::{
     array::TryFromSliceError,
     borrow::Borrow,
@@ -41,6 +32,11 @@ use {
     scale_decode::DecodeAsType,
     scale_encode::EncodeAsType,
     scale_info::TypeInfo,
+};
+
+use crate::arithmetic::{
+    AtLeast32BitUnsigned,
+    Saturating,
 };
 
 /// The default environment `AccountId` type.
@@ -109,20 +105,14 @@ impl Borrow<[u8; 32]> for AccountId {
     }
 }
 
-impl SolValue for AccountId {
-    type SolType = sol_data::FixedBytes<32>;
-
-    #[inline]
-    fn abi_encode(&self) -> ink_prelude::vec::Vec<u8> {
-        self.0.as_slice().abi_encode()
-    }
-}
-
-impl From<FixedBytes<32>> for AccountId {
-    fn from(value: FixedBytes<32>) -> Self {
-        AccountId(value.0)
-    }
-}
+/// A Solidity compatible `address` type.
+///
+/// # Note
+///
+/// This is a type alias for the `H160` type used for addresses in `pallet-revive`.
+// For rationale for using `H160` as the `address` type,
+// see https://github.com/use-ink/ink/pull/2441#discussion_r2021230718.
+pub type Address = H160;
 
 /// The default environment `Hash` type.
 ///
@@ -181,21 +171,6 @@ impl Borrow<[u8; 32]> for Hash {
     }
 }
 
-impl SolValue for Hash {
-    type SolType = sol_data::FixedBytes<32>;
-
-    #[inline]
-    fn abi_encode(&self) -> ink_prelude::vec::Vec<u8> {
-        self.0.abi_encode()
-    }
-}
-
-impl From<FixedBytes<32>> for Hash {
-    fn from(value: FixedBytes<32>) -> Self {
-        Hash(value.0)
-    }
-}
-
 /// The equivalent of `Zero` for hashes.
 ///
 /// A hash that consists only of 0 bits is clear.
@@ -223,6 +198,7 @@ impl Clear for Hash {
     }
 }
 
+// todo
 // impl Clear for H256 {
 // const CLEAR_HASH: Self = H256::CLEAR_HASH;
 //
@@ -230,30 +206,6 @@ impl Clear for Hash {
 // self.as_bytes().iter().all(|&byte| byte == 0x00)
 // }
 // }
-
-#[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
-#[cfg_attr(
-    feature = "std",
-    derive(
-        scale_info::TypeInfo,
-        EncodeAsType,
-        serde::Serialize,
-        serde::Deserialize
-    )
-)]
-pub enum DepositLimit<Balance> {
-    /// Allows bypassing all balance transfer checks.
-    Unchecked,
-
-    /// Specifies a maximum allowable balance for a deposit.
-    Balance(Balance),
-}
-
-impl<T> From<T> for DepositLimit<T> {
-    fn from(value: T) -> Self {
-        Self::Balance(value)
-    }
-}
 
 /// Allows to instantiate a type from its little-endian bytes representation.
 pub trait FromLittleEndian {
@@ -332,7 +284,7 @@ pub trait AccountIdGuard {}
 /// used in the [`DefaultEnvironment`].
 impl AccountIdGuard for AccountId {}
 
-impl AccountIdGuard for H160 {}
+impl AccountIdGuard for Address {}
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
@@ -345,12 +297,14 @@ cfg_if::cfg_if! {
 }
 
 /// The environmental types usable by contracts defined with ink!.
+///
+/// The types and consts in this trait must be the same as the chain to which
+/// the contract is deployed to. We have a mechanism in `cargo-contract` that
+/// attempts to check for type equality, but not everything can be compared.
 pub trait Environment: Clone {
-    /// The maximum number of supported event topics provided by the runtime.
-    ///
-    /// The value must match the maximum number of supported event topics of the used
-    /// runtime.
-    const MAX_EVENT_TOPICS: usize;
+    /// The ratio between the decimal representation of the native `Balance` token
+    /// and the ETH token.
+    const NATIVE_TO_ETH_RATIO: u32;
 
     /// The account id type.
     type AccountId: 'static
@@ -373,6 +327,7 @@ pub trait Environment: Clone {
         + PartialEq
         + Eq
         + AtLeast32BitUnsigned
+        + Into<U256>
         + FromLittleEndian;
 
     /// The type of hash.
@@ -411,41 +366,41 @@ pub trait Environment: Clone {
         + AtLeast32BitUnsigned
         + FromLittleEndian;
 
-    /// The chain extension for the environment.
-    ///
-    /// This is a type that is defined through the `#[ink::chain_extension]` procedural
-    /// macro. For more information about usage and definition click
-    /// [this][chain_extension] link.
-    ///
-    /// [chain_extension]: https://use-ink.github.io/ink/ink/attr.chain_extension.html
-    type ChainExtension;
-
     /// TODO comment
     type EventRecord: 'static + scale::Codec;
 
-    // type AddressMapper: 'static + AddressMapper<Self>;
+    /// Converts from the generic `Balance` type to the Ethereum native `U256`.
+    ///
+    /// # Developer Note
+    ///
+    /// `pallet-revive` uses both types, hence we have to convert in between them
+    /// for certain functions. Notice that precision loss might occur when converting
+    /// the other way (from `U256` to `Balance`).
+    ///
+    /// See <https://github.com/paritytech/polkadot-sdk/pull/9101> for more details.
+    fn native_to_eth(value: Self::Balance) -> U256 {
+        value
+            .saturating_mul(Self::NATIVE_TO_ETH_RATIO.into())
+            .into()
+    }
 }
-
-/// Placeholder for chains that have no defined chain extension.
-#[cfg_attr(feature = "std", derive(TypeInfo))]
-pub enum NoChainExtension {}
 
 /// The fundamental types of the default configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "std", derive(TypeInfo))]
 pub enum DefaultEnvironment {}
 
-//use sp_core::crypto::AccountId32;
-//use sp_runtime::AccountId32;
 impl Environment for DefaultEnvironment {
-    const MAX_EVENT_TOPICS: usize = 4;
+    // This number was chosen as it's also what `pallet-revive`
+    // chooses by default. It's also the number present in the
+    // `ink_sandbox` and the `ink-node`.
+    const NATIVE_TO_ETH_RATIO: u32 = 100_000_000;
 
     type AccountId = AccountId;
     type Balance = Balance;
     type Hash = Hash;
     type Timestamp = Timestamp;
     type BlockNumber = BlockNumber;
-    type ChainExtension = NoChainExtension;
     type EventRecord = EventRecord;
 }
 
@@ -466,11 +421,11 @@ pub type BlockNumber = u32;
 pub struct RuntimeEvent();
 
 /// The default event record type.
-pub type EventRecord = EventRecordFoo<RuntimeEvent, Hash>;
+pub type EventRecord = EventRecordSpec<RuntimeEvent, Hash>;
 
 #[derive(Encode, Decode, Debug)]
 #[cfg_attr(feature = "std", derive(TypeInfo))]
-pub struct EventRecordFoo<E, H> {
+pub struct EventRecordSpec<E, H> {
     /// The phase of the block it happened in.
     pub phase: Phase,
     /// The event itself.
@@ -499,21 +454,21 @@ pub enum Origin<E: Environment> {
     Signed(E::AccountId),
 }
 
+/// Copied from `pallet-revive`.
 pub struct AccountIdMapper {}
 impl AccountIdMapper {
-    //pub fn to_address(account_id: &E::AccountId) -> H160 {
-    pub fn to_address(account_id: &[u8]) -> H160 {
+    pub fn to_address(account_id: &[u8]) -> Address {
         let mut account_bytes: [u8; 32] = [0u8; 32];
         account_bytes.copy_from_slice(&account_id[..32]);
         if Self::is_eth_derived(account_id) {
             // this was originally an eth address
             // we just strip the 0xEE suffix to get the original address
-            H160::from_slice(&account_bytes[..20])
+            Address::from_slice(&account_bytes[..20])
         } else {
             // this is an (ed|sr)25510 derived address
             // avoid truncating the public key by hashing it first
             let account_hash = keccak_256(account_bytes.as_ref());
-            H160::from_slice(&account_hash[12..])
+            Address::from_slice(&account_hash[12..])
         }
     }
 
@@ -522,81 +477,8 @@ impl AccountIdMapper {
     /// This is a stateless check that just compares the last 12 bytes. Please note that
     /// it is theoretically possible to create an ed25519 keypair that passed this
     /// filter. However, this can't be used for an attack. It also won't happen by
-    /// accident since everbody is using sr25519 where this is not a valid public key.
-    //fn is_eth_derived(account_id: &[u8]) -> bool {
+    /// accident since everybody is using sr25519 where this is not a valid public key.
     fn is_eth_derived(account_bytes: &[u8]) -> bool {
         account_bytes[20..] == [0xEE; 12]
-    }
-}
-
-/// A Solidity compatible `address` type.
-#[derive(
-    Debug,
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    Ord,
-    PartialOrd,
-    Hash,
-    Decode,
-    Encode,
-    MaxEncodedLen,
-    From,
-)]
-#[cfg_attr(feature = "std", derive(TypeInfo, DecodeAsType, EncodeAsType))]
-pub struct Address(pub [u8; 20]);
-
-impl AsRef<[u8; 20]> for Address {
-    fn as_ref(&self) -> &[u8; 20] {
-        &self.0
-    }
-}
-
-impl AsMut<[u8; 20]> for Address {
-    fn as_mut(&mut self) -> &mut [u8; 20] {
-        &mut self.0
-    }
-}
-
-impl AsRef<[u8]> for Address {
-    fn as_ref(&self) -> &[u8] {
-        &self.0[..]
-    }
-}
-
-impl AsMut<[u8]> for Address {
-    fn as_mut(&mut self) -> &mut [u8] {
-        &mut self.0[..]
-    }
-}
-
-impl<'a> TryFrom<&'a [u8]> for Address {
-    type Error = TryFromSliceError;
-
-    fn try_from(bytes: &'a [u8]) -> Result<Self, TryFromSliceError> {
-        let address = <[u8; 20]>::try_from(bytes)?;
-        Ok(Self(address))
-    }
-}
-
-impl Borrow<[u8; 20]> for Address {
-    fn borrow(&self) -> &[u8; 20] {
-        &self.0
-    }
-}
-
-impl SolValue for Address {
-    type SolType = sol_data::Address;
-
-    #[inline]
-    fn abi_encode(&self) -> ink_prelude::vec::Vec<u8> {
-        self.0.as_slice().abi_encode()
-    }
-}
-
-impl From<SolAddress> for Address {
-    fn from(value: SolAddress) -> Self {
-        Address(value.into_array())
     }
 }

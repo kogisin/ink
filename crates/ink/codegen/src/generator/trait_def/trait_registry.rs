@@ -19,13 +19,8 @@
 //! crate implement each and every ink! trait definition and defining associated
 //! types for the trait's respective call builder and call forwarder.
 
-use super::TraitDefinition;
-use crate::{
-    generator,
-    traits::GenerateCode,
-    EnforcedErrors,
-};
 use derive_more::From;
+use ink_primitives::abi::Abi;
 use proc_macro2::{
     Span,
     TokenStream as TokenStream2,
@@ -40,14 +35,22 @@ use syn::{
     spanned::Spanned,
 };
 
+use super::TraitDefinition;
+use crate::{
+    EnforcedErrors,
+    generator,
+    generator::sol,
+    traits::GenerateCode,
+};
+
 impl TraitDefinition<'_> {
     /// Generates the code for the global trait registry implementation.
     ///
     /// This also generates the code for the global trait info object which
     /// implements some `ink` traits to provide common information about
     /// the ink! trait definition such as its unique identifier.
-    pub fn generate_trait_registry_impl(&self) -> TokenStream2 {
-        TraitRegistry::from(*self).generate_code()
+    pub fn generate_trait_registry_impl(&self, abi: Option<Abi>) -> TokenStream2 {
+        TraitRegistry::from((*self, abi)).generate_code()
     }
 
     /// Returns the identifier for the ink! trait definition info object.
@@ -60,6 +63,7 @@ impl TraitDefinition<'_> {
 #[derive(From)]
 struct TraitRegistry<'a> {
     trait_def: TraitDefinition<'a>,
+    abi: Option<Abi>,
 }
 
 impl GenerateCode for TraitRegistry<'_> {
@@ -121,10 +125,8 @@ impl TraitRegistry<'_> {
     fn generate_registry_messages(&self) -> TokenStream2 {
         let messages = self.trait_def.trait_def.item().iter_items().filter_map(
             |(item, selector)| {
-                let ret = item.filter_map_message().map(|message| {
-                    self.generate_registry_for_message(&message, selector)
-                });
-                ret
+                item.filter_map_message()
+                    .map(|message| self.generate_registry_for_message(&message, selector))
             },
         );
         quote! {
@@ -133,14 +135,21 @@ impl TraitRegistry<'_> {
     }
 
     /// Generates code to assert that ink! input and output types meet certain properties.
-    fn generate_inout_guards_for_message(message: &ir::InkTraitMessage) -> TokenStream2 {
+    fn generate_inout_guards_for_message(
+        message: &ir::InkTraitMessage,
+        abi: Abi,
+    ) -> TokenStream2 {
         let message_span = message.span();
+        let (input_trait, output_trait) = match abi {
+            Abi::Ink => (quote!(DispatchInput), quote!(DispatchOutput)),
+            Abi::Sol => (quote!(DispatchInputSol), quote!(DispatchOutputSol)),
+        };
         let message_inputs = message.inputs().map(|input| {
             let input_span = input.span();
             let input_type = &*input.ty;
             quote_spanned!(input_span=>
                 ::ink::codegen::utils::consume_type::<
-                    ::ink::codegen::DispatchInput<#input_type>
+                    ::ink::codegen::#input_trait<#input_type>
                 >();
             )
         });
@@ -148,7 +157,7 @@ impl TraitRegistry<'_> {
             let output_span = output_type.span();
             quote_spanned!(output_span=>
                 ::ink::codegen::utils::consume_type::<
-                    ::ink::codegen::DispatchOutput<#output_type>
+                    ::ink::codegen::#output_trait<#output_type>
                 >();
             )
         });
@@ -185,7 +194,11 @@ impl TraitRegistry<'_> {
             selector,
             message.mutates(),
         );
-        let inout_guards = Self::generate_inout_guards_for_message(message);
+        let generator = |abi| Self::generate_inout_guards_for_message(message, abi);
+        let inout_guards = match self.abi {
+            None => generate_abi_impls!(@type generator),
+            Some(abi) => generator(abi),
+        };
         let impl_body = match option_env!("INK_COVERAGE_REPORTING") {
             Some("true") => {
                 quote! {
@@ -202,7 +215,7 @@ impl TraitRegistry<'_> {
                 quote! {
                     /// We enforce linking errors in case this is ever actually called.
                     /// These linker errors are properly resolved by the cargo-contract tool.
-                    extern {
+                    unsafe extern {
                         fn #linker_error_ident() -> !;
                     }
                     unsafe { #linker_error_ident() }
@@ -227,7 +240,7 @@ impl TraitRegistry<'_> {
 
     /// Returns a pair of input bindings `__ink_bindings_N` and types.
     fn input_bindings_and_types(
-        inputs: ir::InputsIter,
+        inputs: ir::InputsIter<'_>,
     ) -> (Vec<syn::Ident>, Vec<&syn::Type>) {
         inputs
             .enumerate()
@@ -276,14 +289,14 @@ impl TraitRegistry<'_> {
             where
                 E: ::ink::env::Environment,
             {
-                type Forwarder = #trait_call_forwarder<E>;
+                type Forwarder<Abi> = #trait_call_forwarder<E, Abi>;
             }
 
             impl<E> ::ink::codegen::TraitMessageBuilder for #trait_info_ident<E>
             where
                 E: ::ink::env::Environment,
             {
-                type MessageBuilder = #trait_message_builder<E>;
+                type MessageBuilder<Abi> = #trait_message_builder<E, Abi>;
             }
         )
     }
@@ -332,19 +345,38 @@ impl TraitRegistry<'_> {
     ) -> TokenStream2 {
         let span = message.span();
         let trait_info_ident = self.trait_def.trait_info_ident();
-        let local_id = message.local_id();
-        let selector_bytes = selector.hex_lits();
         let is_payable = message.ink_attrs().is_payable();
-        // TODO: (@davidsemakula) generate Solidity selectors when spec for determining
-        // trait definition ABI is finalized.
-        // NOTE: This doesn't affect call decoding because the selector is computed
-        // directly from the implementation signature.
-        quote_spanned!(span=>
-            impl<E> ::ink::reflect::TraitMessageInfo<#local_id> for #trait_info_ident<E> {
-                const PAYABLE: ::core::primitive::bool = #is_payable;
-
-                const SELECTOR: [::core::primitive::u8; 4usize] = [ #( #selector_bytes ),* ];
-            }
-        )
+        let generator = |abi| {
+            let (local_id, selector_bytes) = match abi {
+                Abi::Ink => {
+                    let local_id = message.local_id();
+                    let selector_bytes = selector.hex_lits();
+                    (quote!(#local_id), quote!([ #( #selector_bytes ),* ]))
+                }
+                Abi::Sol => {
+                    let name = message.normalized_name();
+                    let signature = sol::utils::call_signature(name, message.inputs());
+                    let selector_bytes = quote! {
+                        ::ink::codegen::sol::selector_bytes(#signature)
+                    };
+                    let selector_id = quote!(
+                        {
+                            ::core::primitive::u32::from_be_bytes(#selector_bytes)
+                        }
+                    );
+                    (selector_id, selector_bytes)
+                }
+            };
+            quote_spanned!(span=>
+                impl<E> ::ink::reflect::TraitMessageInfo<#local_id> for #trait_info_ident<E> {
+                    const PAYABLE: ::core::primitive::bool = #is_payable;
+                    const SELECTOR: [::core::primitive::u8; 4usize] = #selector_bytes;
+                }
+            )
+        };
+        match self.abi {
+            None => generate_abi_impls!(@type generator),
+            Some(abi) => generator(abi),
+        }
     }
 }

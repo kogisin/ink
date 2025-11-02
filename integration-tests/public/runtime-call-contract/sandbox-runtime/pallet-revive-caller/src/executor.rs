@@ -5,33 +5,30 @@ use frame_support::{
 };
 use frame_system::pallet_prelude::OriginFor;
 use ink::{
+    Address,
+    MessageResult,
     env::{
+        Environment,
         call::{
-            utils::DecodeMessageResult,
             ExecutionInput,
             Executor,
+            utils::{
+                DecodeMessageResult,
+                EncodeArgsWith,
+            },
         },
-        Environment,
     },
     primitives::U256,
-    reflect::{
-        AbiDecodeWith,
-        AbiEncodeWith,
-    },
-    MessageResult,
-    H160,
 };
 use pallet_revive::{
-    DepositLimit,
+    ExecConfig,
     MomentOf,
 };
 use sp_runtime::traits::Bounded;
 
 pub struct PalletReviveExecutor<E: Environment, Runtime: pallet_revive::Config> {
-    // todo
-    //pub origin: AccountIdOf<Runtime>,
     pub origin: OriginFor<Runtime>,
-    pub contract: H160,
+    pub contract: Address,
     pub value: BalanceOf<Runtime>,
     pub gas_limit: Weight,
     // todo
@@ -44,7 +41,6 @@ impl<E, R> Executor<E> for PalletReviveExecutor<E, R>
 where
     E: Environment,
     R: pallet_revive::Config,
-
     BalanceOf<R>: Into<U256> + TryFrom<U256> + Bounded,
     MomentOf<R>: Into<U256>,
     <R as frame_system::Config>::Hash: IsType<sp_runtime::testing::H256>,
@@ -56,26 +52,32 @@ where
         input: &ExecutionInput<Args, Abi>,
     ) -> Result<MessageResult<Output>, Self::Error>
     where
-        Args: AbiEncodeWith<Abi>,
-        Output: AbiDecodeWith<Abi> + DecodeMessageResult<Abi>,
+        Args: EncodeArgsWith<Abi>,
+        Output: DecodeMessageResult<Abi>,
     {
         let data = input.encode();
+
         let result = pallet_revive::Pallet::<R>::bare_call(
             self.origin.clone(),
-            // <R as pallet_revive::Config>::AddressMapper::to_account_id(&self.
-            // contract),
             self.contract,
-            self.value,
+            ink_sandbox::balance_to_evm_value::<R>(self.value),
             self.gas_limit,
             // self.storage_deposit_limit,
-            DepositLimit::Unchecked, // todo
+            BalanceOf::<R>::max_value(), // todo
             data,
+            ExecConfig {
+                bump_nonce: true,
+                collect_deposit_from_hold: None,
+                effective_gas_price: None,
+            },
         );
 
-        let output = result.result?.data;
-        let result = DecodeMessageResult::decode_output(&output[..]).map_err(|_| {
-            sp_runtime::DispatchError::Other("Failed to decode contract output")
-        })?;
+        let output = result.result?;
+        let result =
+            DecodeMessageResult::decode_output(&output.data[..], output.did_revert())
+                .map_err(|_| {
+                    sp_runtime::DispatchError::Other("Failed to decode contract output")
+                })?;
 
         Ok(result)
     }

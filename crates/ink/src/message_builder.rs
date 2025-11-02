@@ -20,33 +20,42 @@
 /// The macro returns an instance of the generated message builder type which implements
 /// the trait, allowing the user to create and invoke messages on the trait.
 ///
-/// This is similar to the call builder syntax accessible via the [`crate::contract_ref!`]
-/// macro, except that it is decoupled from the callee account id, as well as the
-/// underlying execution environment. This allows it to be used in execution contexts
-/// other than cross-contract calls.
+/// This is similar to the call builder syntax accessible via the
+/// [`crate::contract_ref_from_path!`] macro, except that it is decoupled from the callee
+/// account id, as well as the underlying execution environment. This allows it to be used
+/// in execution contexts other than cross-contract calls.
 ///
 /// # Usage
 ///
-/// The macro expects two arguments:
+/// The macro expects up to three arguments:
 /// - The first argument is the path to the trait, e.g. `Erc20` or `erc20::Erc20`.
 /// - The second argument is the type of the [`ink_env::Environment`].
+/// - The third argument is the marker type for the ABI (i.e.
+///   [`ink::abi::Ink`][crate::abi::Ink] or [`ink::abi::Sol`][crate::abi::Sol]).
 ///
 /// If the second argument is not specified, the macro uses the
 /// [`ink_env::DefaultEnvironment`].
+/// If the third argument is not specified, the macro uses the "default" ABI for calls
+/// for the ink! project.
+///
+/// # Note
+///
+/// The "default" ABI for calls is "ink", unless the ABI is set to "sol"
+/// in the ink! project's manifest file (i.e. `Cargo.toml`).
 ///
 /// ```rust
 /// use ink::message_builder;
 /// use ink_env::{
+///     DefaultEnvironment,
 ///     call::{
 ///         ExecutionInput,
 ///         Executor,
 ///     },
-///     DefaultEnvironment,
 /// };
 /// use ink_primitives::{
 ///     AccountId,
+///     Address,
 ///     MessageResult,
-///     H160,
 /// };
 /// use scale::{
 ///     Decode,
@@ -61,20 +70,19 @@
 ///
 ///     /// Transfers balance from the caller to the given address.
 ///     #[ink(message)]
-///     fn transfer(&mut self, amount: u128, to: H160) -> bool;
+///     fn transfer(&mut self, amount: u128, to: Address) -> bool;
 /// }
 ///
 /// #[derive(Clone)]
 /// pub struct CustomEnv;
 ///
 /// impl ink_env::Environment for CustomEnv {
-///     const MAX_EVENT_TOPICS: usize = 3;
+///     const NATIVE_TO_ETH_RATIO: u32 = 100_000_000;
 ///     type AccountId = [u8; 32];
 ///     type Balance = u64;
 ///     type Hash = [u8; 32];
 ///     type Timestamp = u64;
 ///     type BlockNumber = u64;
-///     type ChainExtension = ();
 ///     type EventRecord = ();
 /// }
 ///
@@ -101,29 +109,36 @@
 ///         input: &ExecutionInput<Args, Abi>,
 ///     ) -> Result<MessageResult<Output>, Self::Error>
 ///     where
-///         Args: ink::reflect::AbiEncodeWith<Abi>,
-///         Output: ink::reflect::AbiDecodeWith<Abi>,
+///         Args: ink::env::call::utils::EncodeArgsWith<Abi>,
+///         Output: ink::env::call::utils::DecodeMessageResult<Abi>,
 ///     {
 ///         println!("Executing contract with input: {:?}", input.encode());
 ///         unimplemented!("Decode contract execution output")
 ///     }
 /// }
 ///
-/// fn default(to: H160) {
+/// fn default(to: Address) {
 ///     let executor = ExampleExecutor::<DefaultEnvironment>::new();
 ///     let mut contract = message_builder!(Erc20);
 ///     let total_supply = contract.total_supply().exec(&executor).unwrap().unwrap();
 ///     contract.transfer(total_supply, to).exec(&executor).unwrap();
 /// }
 ///
-/// fn custom(to: H160) {
+/// fn custom(to: Address) {
 ///     let executor = ExampleExecutor::<CustomEnv>::new();
 ///     let mut contract = message_builder!(Erc20, CustomEnv);
 ///     let total_supply = contract.total_supply().exec(&executor).unwrap().unwrap();
 ///     contract.transfer(total_supply, to).exec(&executor).unwrap();
 /// }
 ///
-/// fn generic<E>(to: H160)
+/// fn custom_abi(to: Address) {
+///     let executor = ExampleExecutor::<DefaultEnvironment>::new();
+///     let mut contract = message_builder!(Erc20, DefaultEnvironment, ink::abi::Ink);
+///     let total_supply = contract.total_supply().exec(&executor).unwrap().unwrap();
+///     contract.transfer(total_supply, to).exec(&executor).unwrap();
+/// }
+///
+/// fn generic<E>(to: Address)
 /// where
 ///     E: ink_env::Environment,
 /// {
@@ -135,15 +150,19 @@
 /// ```
 #[macro_export]
 macro_rules! message_builder {
-    // The case of the default `Environment`
+    // The case of the default `Environment` and ABI
     ( $trait_path:path ) => {
         $crate::message_builder!($trait_path, $crate::env::DefaultEnvironment)
     };
-    // The case of the custom `Environment`
+    // The case of the custom `Environment` and default ABI
     ( $trait_path:path, $env:ty ) => {
+        $crate::message_builder!($trait_path, $env, $crate::env::DefaultAbi)
+    };
+    // The case of the custom `Environment` and ABI
+    ( $trait_path:path, $env:ty, $abi:ty ) => {
         <<<$crate::reflect::TraitDefinitionRegistry<$env>
                             as $trait_path>::__ink_TraitInfo
-                            as $crate::codegen::TraitMessageBuilder>::MessageBuilder
+                            as $crate::codegen::TraitMessageBuilder>::MessageBuilder<$abi>
                             as ::core::default::Default>::default()
     };
 }

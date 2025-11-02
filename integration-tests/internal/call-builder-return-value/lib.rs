@@ -7,11 +7,11 @@
 mod call_builder {
     use ink::{
         env::{
+            DefaultEnvironment,
             call::{
                 ExecutionInput,
                 Selector,
             },
-            DefaultEnvironment,
         },
         prelude::{
             format,
@@ -20,7 +20,6 @@ mod call_builder {
                 ToString,
             },
         },
-        H160,
     };
 
     #[ink(storage)]
@@ -39,7 +38,7 @@ mod call_builder {
 
         /// Delegate a call to the given contract/selector and return the result.
         #[ink(message)]
-        pub fn delegate_call(&mut self, address: ink::H160, selector: [u8; 4]) -> i32 {
+        pub fn delegate_call(&mut self, address: Address, selector: [u8; 4]) -> i32 {
             use ink::env::call::build_call;
 
             build_call::<DefaultEnvironment>()
@@ -54,7 +53,7 @@ mod call_builder {
         #[ink(message)]
         pub fn delegate_call_short_return_type(
             &mut self,
-            address: ink::H160,
+            address: Address,
             selector: [u8; 4],
         ) -> Result<i8, String> {
             use ink::env::call::build_call;
@@ -67,15 +66,15 @@ mod call_builder {
 
             match result {
                 Ok(Ok(value)) => Ok(value),
-                Ok(Err(err)) => Err(format!("LangError: {:?}", err)),
+                Ok(Err(err)) => Err(format!("LangError: {err:?}")),
                 Err(ink::env::Error::Decode(_)) => Err("Decode Error".to_string()),
-                Err(err) => Err(format!("Env Error: {:?}", err)),
+                Err(err) => Err(format!("Env Error: {err:?}")),
             }
         }
 
         /// Forward a call to the given contract/selector and return the result.
         #[ink(message)]
-        pub fn forward_call(&mut self, address: H160, selector: [u8; 4]) -> i32 {
+        pub fn forward_call(&mut self, address: Address, selector: [u8; 4]) -> i32 {
             use ink::env::call::build_call;
 
             build_call::<DefaultEnvironment>()
@@ -90,7 +89,7 @@ mod call_builder {
         #[ink(message)]
         pub fn forward_call_short_return_type(
             &mut self,
-            address: H160,
+            address: Address,
             selector: [u8; 4],
         ) -> Result<i8, String> {
             use ink::env::call::build_call;
@@ -103,9 +102,9 @@ mod call_builder {
 
             match result {
                 Ok(Ok(value)) => Ok(value),
-                Ok(Err(err)) => Err(format!("LangError: {:?}", err)),
+                Ok(Err(err)) => Err(format!("LangError: {err:?}")),
                 Err(ink::env::Error::Decode(_)) => Err("Decode Error".to_string()),
-                Err(err) => Err(format!("Env Error: {:?}", err)),
+                Err(err) => Err(format!("Env Error: {err:?}")),
             }
         }
     }

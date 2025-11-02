@@ -55,24 +55,46 @@ impl InkE2ETest {
             .environment()
             .unwrap_or_else(|| syn::parse_quote! { ::ink::env::DefaultEnvironment });
 
+        let chosen_test_attr = self
+            .test
+            .config
+            .replace_test_attr()
+            .unwrap_or_else(|| "#[test]".to_string());
+        let possibly_fn_input = if chosen_test_attr == "#[test]" {
+            quote! {}
+        } else {
+            let inputs = &item_fn.sig.inputs;
+            quote! { #inputs }
+        };
+
+        let features = self.test.config.features();
         let exec_build_contracts = quote! {
-            ::ink_e2e::build_root_and_contract_dependencies()
+            ::ink_e2e::build_root_and_contract_dependencies(
+                vec![#( #features.to_string() ),*]
+            )
         };
 
         let client_building = match self.test.config.backend() {
             Backend::Node(node_config) => {
                 build_full_client(&environment, exec_build_contracts, node_config)
             }
-            #[cfg(any(test, feature = "sandbox"))]
-            Backend::RuntimeOnly(runtime) => {
-                build_runtime_client(exec_build_contracts, runtime.into())
+            Backend::RuntimeOnly(args) => {
+                let runtime: syn::Path = args.runtime_path();
+                let client: syn::Path = args.client_path();
+                build_runtime_client(exec_build_contracts, runtime, client)
             }
         };
 
+        let parser = syn::Attribute::parse_outer;
+        use syn::parse::Parser;
+        let chosen_test_attr = parser
+            .parse_str(&chosen_test_attr)
+            .expect("Failed to parse attribute");
+
         quote! {
             #( #attrs )*
-            #[test]
-            #vis fn #fn_name () #ret {
+            #( #chosen_test_attr )*
+            #vis fn #fn_name (#possibly_fn_input) #ret {
                 use ::ink_e2e::log_info;
                 ::ink_e2e::LOG_PREFIX.with(|log_prefix| {
                     let str = format!("test: {}", stringify!(#fn_name));
@@ -81,7 +103,8 @@ impl InkE2ETest {
                 log_info("setting up e2e test");
 
                 ::ink_e2e::INIT.call_once(|| {
-                    ::ink_e2e::tracing_subscriber::fmt::init();
+                    // A global subscriber might already have been set up.
+                    let _ = ::ink_e2e::tracing_subscriber::fmt::try_init();
                 });
 
                 log_info("creating new client");
@@ -124,7 +147,8 @@ fn build_full_client(
                 let mut client = ::ink_e2e::Client::<
                     ::ink_e2e::PolkadotConfig,
                     #environment
-                >::new(rpc, contracts, #url.to_string()).await?;
+                >::new(rpc, contracts, #url.to_string()).await
+                    .expect("Failed creating Client");
             }
         }
         None => {
@@ -140,16 +164,20 @@ fn build_full_client(
                 let mut client = ::ink_e2e::Client::<
                     ::ink_e2e::PolkadotConfig,
                     #environment
-                >::new(node_rpc.rpc(), contracts, node_rpc.url().to_string()).await?;
+                >::new(node_rpc.rpc(), contracts, node_rpc.url().to_string()).await
+                    .expect("Failed creating Client");
             }
         }
     }
 }
 
-#[cfg(any(test, feature = "sandbox"))]
-fn build_runtime_client(contracts: TokenStream2, runtime: syn::Path) -> TokenStream2 {
+fn build_runtime_client(
+    contracts: TokenStream2,
+    runtime: syn::Path,
+    client: syn::Path,
+) -> TokenStream2 {
     quote! {
         let contracts = #contracts;
-        let mut client = ::ink_e2e::SandboxClient::<_, #runtime>::new(contracts);
+        let mut client = #client::<_, #runtime>::new(contracts);
     }
 }

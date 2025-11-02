@@ -13,11 +13,11 @@
 // limitations under the License.
 
 use super::{
-    ensure_callable_invariants,
     Callable,
     CallableKind,
     InputsIter,
     Visibility,
+    ensure_callable_invariants,
 };
 use crate::ir::{
     self,
@@ -112,6 +112,13 @@ pub struct Message {
     /// This overrides the computed selector, even when using a manual namespace
     /// for the parent implementation block.
     selector: Option<SelectorOrWildcard>,
+    /// An optional function name override.
+    ///
+    /// # Note
+    ///
+    /// - Useful for defining overloaded interfaces.
+    /// - If provided, the name must be a valid "identifier-like" string.
+    name: Option<String>,
 }
 
 impl quote::ToTokens for Message {
@@ -123,8 +130,7 @@ impl quote::ToTokens for Message {
 }
 
 impl Message {
-    /// Ensures that the given method inputs start with `&self` or `&mut self`
-    /// receivers.
+    /// Returns the self reference receiver (if any), given method inputs.
     ///
     /// If not an appropriate error is returned.
     ///
@@ -132,9 +138,9 @@ impl Message {
     ///
     /// - If the method inputs yields no elements.
     /// - If the first method input is not `&self` or `&mut self`.
-    fn ensure_receiver_is_self_ref(
+    fn self_ref_receiver(
         method_item: &syn::ImplItemFn,
-    ) -> Result<(), syn::Error> {
+    ) -> Result<&syn::Receiver, syn::Error> {
         let mut fn_args = method_item.sig.inputs.iter();
         fn bail(span: Span) -> syn::Error {
             format_err!(
@@ -143,15 +149,15 @@ impl Message {
             )
         }
         match fn_args.next() {
-            None => return Err(bail(method_item.span())),
-            Some(syn::FnArg::Typed(pat_typed)) => return Err(bail(pat_typed.span())),
+            None => Err(bail(method_item.span())),
+            Some(syn::FnArg::Typed(pat_typed)) => Err(bail(pat_typed.span())),
             Some(syn::FnArg::Receiver(receiver)) => {
-                if receiver.reference.is_none() {
-                    return Err(bail(receiver.span()))
+                match receiver.reference {
+                    None => Err(bail(receiver.span())),
+                    Some(_) => Ok(receiver),
                 }
             }
         }
-        Ok(())
     }
 
     /// Ensures that the ink! message does not return `Self`.
@@ -163,13 +169,13 @@ impl Message {
         match &method_item.sig.output {
             syn::ReturnType::Default => (),
             syn::ReturnType::Type(_arrow, ret_type) => {
-                if let syn::Type::Path(type_path) = &**ret_type {
-                    if type_path.path.is_ident("Self") {
-                        return Err(format_err!(
-                            ret_type,
-                            "ink! messages must not return `Self`"
-                        ))
-                    }
+                if let syn::Type::Path(type_path) = &**ret_type
+                    && type_path.path.is_ident("Self")
+                {
+                    return Err(format_err!(
+                        ret_type,
+                        "ink! messages must not return `Self`"
+                    ))
                 }
             }
         }
@@ -191,7 +197,8 @@ impl Message {
                     ir::AttributeArg::Message
                     | ir::AttributeArg::Payable
                     | ir::AttributeArg::Default
-                    | ir::AttributeArg::Selector(_) => Ok(()),
+                    | ir::AttributeArg::Selector(_)
+                    | ir::AttributeArg::Name(_) => Ok(()),
                     _ => Err(None),
                 }
             },
@@ -204,16 +211,37 @@ impl TryFrom<syn::ImplItemFn> for Message {
 
     fn try_from(method_item: syn::ImplItemFn) -> Result<Self, Self::Error> {
         ensure_callable_invariants(&method_item, CallableKind::Message)?;
-        Self::ensure_receiver_is_self_ref(&method_item)?;
+        // Ensures that the given method inputs start with `&self` or `&mut self`
+        // receivers.
+        let self_ref_receiver = Self::self_ref_receiver(&method_item)?;
         Self::ensure_not_return_self(&method_item)?;
         let (ink_attrs, other_attrs) = Self::sanitize_attributes(&method_item)?;
         let is_payable = ink_attrs.is_payable();
         let is_default = ink_attrs.is_default();
         let selector = ink_attrs.selector();
+        let name = ink_attrs.name();
+        // Ensures that immutable messages are NOT payable.
+        if is_payable && self_ref_receiver.mutability.is_none() {
+            return Err(format_err!(
+                method_item.span(),
+                "ink! messages with a `payable` attribute argument must have a `&mut self` receiver",
+            ));
+        }
+        #[cfg(ink_abi = "sol")]
+        if selector.is_some() {
+            let selector_span = ink_attrs.args().find_map(|arg| {
+                matches!(arg.kind(), ir::AttributeArg::Selector(_)).then_some(arg.span())
+            });
+            return Err(format_err!(
+                selector_span.unwrap_or_else(|| method_item.span()),
+                "message `selector` attributes are not supported in Solidity ABI compatibility mode",
+            ));
+        }
         Ok(Self {
             is_payable,
             is_default,
             selector,
+            name,
             item: syn::ImplItemFn {
                 attrs: other_attrs,
                 ..method_item
@@ -262,7 +290,7 @@ impl Callable for Message {
         }
     }
 
-    fn inputs(&self) -> InputsIter {
+    fn inputs(&self) -> InputsIter<'_> {
         InputsIter::from(self)
     }
 
@@ -272,6 +300,14 @@ impl Callable for Message {
 
     fn statements(&self) -> &[syn::Stmt] {
         &self.item.block.stmts
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    fn normalized_name(&self) -> String {
+        self.normalized_name()
     }
 }
 
@@ -338,12 +374,28 @@ impl Message {
     /// Although the above scenario is very unlikely since the local ID is computed
     /// solely by the identifier of the ink! message.
     pub fn local_id(&self) -> u32 {
-        utils::local_message_id(self.ident())
+        utils::local_message_id(&self.normalized_name())
     }
 
     /// Returns the identifier of the message with an additional `try_` prefix attached.
     pub fn try_ident(&self) -> Ident {
         quote::format_ident!("try_{}", self.ident())
+    }
+
+    /// Returns the function name override (if any).
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Returns the "normalized" function name
+    ///
+    /// # Note
+    /// This returns the name override (if provided), otherwise the identifier is
+    /// returned.
+    pub fn normalized_name(&self) -> String {
+        self.name()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| self.ident().to_string())
     }
 }
 
@@ -472,7 +524,7 @@ mod tests {
                 true,
                 syn::parse_quote! {
                     #[ink(message, payable)]
-                    pub fn my_message(&self) {}
+                    pub fn my_message(&mut self) {}
                 },
             ),
             // Different ink! attributes.
@@ -481,7 +533,7 @@ mod tests {
                 syn::parse_quote! {
                     #[ink(message)]
                     #[ink(payable)]
-                    pub fn my_message(&self) {}
+                    pub fn my_message(&mut self) {}
                 },
             ),
             // Another ink! attribute, separate and normalized attribute.
@@ -490,7 +542,7 @@ mod tests {
                 syn::parse_quote! {
                     #[ink(message)]
                     #[ink(selector = 0xDEADBEEF, payable)]
-                    pub fn my_message(&self) {}
+                    pub fn my_message(&mut self) {}
                 },
             ),
         ];
@@ -518,7 +570,7 @@ mod tests {
                 true,
                 syn::parse_quote! {
                     #[ink(message, payable, default)]
-                    pub fn my_message(&self) {}
+                    pub fn my_message(&mut self) {}
                 },
             ),
         ];
@@ -527,6 +579,32 @@ mod tests {
                 .unwrap()
                 .is_default();
             assert_eq!(is_default, expect_default);
+        }
+    }
+
+    #[test]
+    fn name_override_works() {
+        let test_inputs: Vec<(Option<&str>, syn::ImplItemFn)> = vec![
+            // No name override.
+            (
+                None,
+                syn::parse_quote! {
+                    #[ink(message)]
+                    fn my_message(&self) {}
+                },
+            ),
+            // Name override.
+            (
+                Some("myMessage"),
+                syn::parse_quote! {
+                    #[ink(message, name = "myMessage")]
+                    pub fn my_message(&mut self) {}
+                },
+            ),
+        ];
+        for (expected_name, item_method) in test_inputs {
+            let message = <ir::Message as TryFrom<_>>::try_from(item_method).unwrap();
+            assert_eq!(message.name(), expected_name);
         }
     }
 
@@ -627,7 +705,7 @@ mod tests {
             // &self + payable
             syn::parse_quote! {
                 #[ink(message, payable)]
-                fn my_message(&self) {}
+                fn my_message(&mut self) {}
             },
             // &mut self + payable
             syn::parse_quote! {

@@ -29,7 +29,7 @@ if [ -z "$manifest_path" ]; then
   exit 1
 fi
 
-build_result=$(cargo +nightly contract build --manifest-path "$manifest_path" --release --quiet --output-json --skip-linting)
+build_result=$(cargo contract build --manifest-path "$manifest_path" --release --quiet --output-json)
 
 if [ $? -eq 0 ]; then
   # only print the contract name and size if the build was successful
@@ -41,5 +41,8 @@ if [ $? -eq 0 ]; then
   exit 0
 else
   echo "Failed to build contract at $manifest_path"
+  if [ "${IGNORE_ERR:-}" = "true" ]; then
+    exit 0
+  fi
   exit 1
 fi

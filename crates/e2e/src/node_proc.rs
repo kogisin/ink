@@ -26,9 +26,9 @@ use std::{
     process,
 };
 use subxt::{
-    backend::rpc::RpcClient,
     Config,
     OnlineClient,
+    backend::rpc::RpcClient,
 };
 
 /// Spawn a local substrate node for testing.
@@ -171,7 +171,7 @@ where
         // Connect to the node with a `subxt` client:
         let rpc = RpcClient::from_url(url.clone())
             .await
-            .map_err(|err| format!("Error initializing rpc client: {}", err))?;
+            .map_err(|err| format!("Error initializing rpc client: {err}"))?;
         let client = OnlineClient::from_url(url.clone()).await;
         match client {
             Ok(client) => {
@@ -197,11 +197,13 @@ where
 // Consume a stderr reader from a spawned substrate command and
 // locate the port number that is logged out to it.
 fn find_substrate_port_from_output(r: impl Read + Send + 'static) -> u16 {
+    let mut all_lines = String::new();
     BufReader::new(r)
         .lines()
         .find_map(|line| {
             let line =
                 line.expect("failed to obtain next line from stdout for port discovery");
+            all_lines.push_str(&format!("{line}\n"));
 
             // does the line contain our port (we expect this specific output from
             // substrate).
@@ -217,11 +219,10 @@ fn find_substrate_port_from_output(r: impl Read + Send + 'static) -> u16 {
             let re = regex::Regex::new(r"^\d+").expect("regex creation failed");
             let port_capture = re
                 .captures(line_end)
-                .unwrap_or_else(|| panic!("unable to extract port from '{}'", line_end));
+                .unwrap_or_else(|| panic!("unable to extract port from '{line_end}'"));
             assert!(
                 port_capture.len() == 1,
-                "captured more than one port from '{}'",
-                line_end
+                "captured more than one port from '{line_end}'"
             );
             let port_str = &port_capture[0];
 
@@ -233,15 +234,20 @@ fn find_substrate_port_from_output(r: impl Read + Send + 'static) -> u16 {
 
             Some(port_num)
         })
-        .expect("We should find a port before the reader ends")
+        .unwrap_or_else(|| {
+            panic!(
+                "Unable to extract port from spawned node, the reader ended.\n\
+            These are the lines we saw up until here:\n{all_lines}"
+            );
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use subxt::{
-        backend::legacy::LegacyRpcMethods,
         PolkadotConfig as SubxtConfig,
+        backend::legacy::LegacyRpcMethods,
     };
 
     #[tokio::test]
@@ -266,16 +272,22 @@ mod tests {
             let res1 = client1.clone().unwrap().chain_get_block_hash(None).await;
             let res2 = client2.clone().unwrap().chain_get_block_hash(None).await;
 
-            assert!(res1.is_ok());
-            assert!(res2.is_ok());
+            assert!(res1.is_ok(), "process 1 is not ok, but should be");
+            assert!(res2.is_ok(), "process 2 is not ok, but should be");
         }
 
         // node processes should have been killed by `Drop` in the above block.
         let res1 = client1.unwrap().chain_get_block_hash(None).await;
         let res2 = client2.unwrap().chain_get_block_hash(None).await;
 
-        assert!(res1.is_err());
-        assert!(res2.is_err());
+        assert!(
+            res1.is_err(),
+            "process 1: did not find err, but expected one"
+        );
+        assert!(
+            res2.is_err(),
+            "process 2: did not find err, but expected one"
+        );
     }
 
     #[test]

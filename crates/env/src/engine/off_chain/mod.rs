@@ -27,7 +27,7 @@ use derive_more::From;
 use ink_engine::ext::Engine;
 use ink_primitives::{
     AccountId,
-    H160,
+    Address,
 };
 
 /// The off-chain environment.
@@ -66,8 +66,6 @@ pub enum OffChainError {
     UninitializedBlocks,
     #[from(ignore)]
     UninitializedExecutionContext,
-    #[from(ignore)]
-    UnregisteredChainExtension,
 }
 
 // todo rename
@@ -79,5 +77,5 @@ pub enum AccountError {
     UnexpectedUserAccount,
     #[from(ignore)]
     NoAccountForId(AccountId),
-    NoContractForId(H160),
+    NoContractForId(Address),
 }

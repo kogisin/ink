@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use crate::{
-    generator,
     GenerateCode,
     GenerateCodeUsing,
+    generator,
 };
 use derive_more::From;
 use proc_macro2::TokenStream as TokenStream2;
@@ -53,6 +53,13 @@ impl GenerateCode for Contract<'_> {
             .items()
             .iter()
             .filter_map(ir::Item::map_rust_item);
+
+        #[cfg(not(any(ink_abi = "sol", ink_abi = "all")))]
+        let solidity_metadata = quote!();
+
+        #[cfg(any(ink_abi = "sol", ink_abi = "all"))]
+        let solidity_metadata = self.generate_code_using::<generator::SolidityMetadata>();
+
         quote! {
             #( #attrs )*
             #vis mod #ident {
@@ -63,6 +70,7 @@ impl GenerateCode for Contract<'_> {
                 #item_impls
                 #contract_reference
                 #metadata
+                #solidity_metadata
                 #( #non_ink_items )*
             }
         }

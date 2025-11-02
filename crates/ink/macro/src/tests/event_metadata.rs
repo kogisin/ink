@@ -27,14 +27,14 @@ fn unit_struct_works() {
                     const MODULE_PATH: &'static str = ::core::module_path!();
 
                     fn event_spec() -> ::ink::metadata::EventSpec {
-                        #[::ink::metadata::linkme::distributed_slice(::ink::metadata::EVENTS)]
-                        #[linkme(crate = ::ink::metadata::linkme)]
+                        #[::ink::linkme::distributed_slice(::ink::CONTRACT_EVENTS)]
+                        #[linkme(crate = ::ink::linkme)]
                         static EVENT_METADATA: fn() -> ::ink::metadata::EventSpec =
                             <UnitStruct as ::ink::metadata::EventMetadata>::event_spec;
 
-                        ::ink::metadata::EventSpec::new(::core::stringify!(UnitStruct))
+                        ::ink::metadata::EventSpec::new("UnitStruct")
                             .module_path(::core::module_path!())
-                            .signature_topic(<Self as ::ink::env::Event>::SIGNATURE_TOPIC)
+                            .signature_topic(<Self as ::ink::env::Event<::ink::abi::Ink>>::SIGNATURE_TOPIC)
                             .args([])
                             .docs([])
                             .done()
@@ -62,14 +62,14 @@ fn struct_with_fields_no_topics() {
                     const MODULE_PATH: &'static str = ::core::module_path!();
 
                     fn event_spec() -> ::ink::metadata::EventSpec {
-                        #[::ink::metadata::linkme::distributed_slice(::ink::metadata::EVENTS)]
-                        #[linkme(crate = ::ink::metadata::linkme)]
+                        #[::ink::linkme::distributed_slice(::ink::CONTRACT_EVENTS)]
+                        #[linkme(crate = ::ink::linkme)]
                         static EVENT_METADATA: fn() -> ::ink::metadata::EventSpec =
                             <Event as ::ink::metadata::EventMetadata>::event_spec;
 
-                        ::ink::metadata::EventSpec::new(::core::stringify!(Event))
+                        ::ink::metadata::EventSpec::new("Event")
                             .module_path(::core::module_path!())
-                            .signature_topic(<Self as ::ink::env::Event>::SIGNATURE_TOPIC)
+                            .signature_topic(<Self as ::ink::env::Event<::ink::abi::Ink>>::SIGNATURE_TOPIC)
                             .args([
                                 ::ink::metadata::EventParamSpec::new(::core::stringify!(field_1))
                                     .of_type(::ink::metadata::TypeSpec::with_name_segs::<u32, _>(
@@ -130,14 +130,14 @@ fn struct_with_fields_and_some_topics() {
                     const MODULE_PATH: &'static str = ::core::module_path!();
 
                     fn event_spec() -> ::ink::metadata::EventSpec {
-                        #[::ink::metadata::linkme::distributed_slice(::ink::metadata::EVENTS)]
-                        #[linkme(crate = ::ink::metadata::linkme)]
+                        #[::ink::linkme::distributed_slice(::ink::CONTRACT_EVENTS)]
+                        #[linkme(crate = ::ink::linkme)]
                         static EVENT_METADATA: fn() -> ::ink::metadata::EventSpec =
                             <Event as ::ink::metadata::EventMetadata>::event_spec;
 
-                        ::ink::metadata::EventSpec::new(::core::stringify!(Event))
+                        ::ink::metadata::EventSpec::new("Event")
                             .module_path(::core::module_path!())
-                            .signature_topic(<Self as ::ink::env::Event>::SIGNATURE_TOPIC)
+                            .signature_topic(<Self as ::ink::env::Event<::ink::abi::Ink>>::SIGNATURE_TOPIC)
                             .args([
                                 ::ink::metadata::EventParamSpec::new(::core::stringify!(field_1))
                                     .of_type(::ink::metadata::TypeSpec::with_name_segs::<u32, _>(
@@ -176,5 +176,37 @@ fn struct_with_fields_and_some_topics() {
                 }
             };
         }
+    }
+}
+
+#[test]
+fn name_override_works() {
+    crate::test_derive! {
+        event_metadata_derive {
+            #[derive(ink::Event, scale::Encode)]
+            #[ink(name = "MyUnitStruct")]
+            struct UnitStruct;
+        }
+        expands to {
+            const _: () = {
+                impl ::ink::metadata::EventMetadata for UnitStruct {
+                    const MODULE_PATH: &'static str = ::core::module_path!();
+
+                    fn event_spec() -> ::ink::metadata::EventSpec {
+                        #[::ink::linkme::distributed_slice(::ink::CONTRACT_EVENTS)]
+                        #[linkme(crate = ::ink::linkme)]
+                        static EVENT_METADATA: fn() -> ::ink::metadata::EventSpec =
+                            <UnitStruct as ::ink::metadata::EventMetadata>::event_spec;
+
+                        ::ink::metadata::EventSpec::new("MyUnitStruct")
+                            .module_path(::core::module_path!())
+                            .signature_topic(<Self as ::ink::env::Event<::ink::abi::Ink>>::SIGNATURE_TOPIC)
+                            .args([])
+                            .docs([])
+                            .done()
+                    }
+                }
+            };
+        } no_build
     }
 }

@@ -12,41 +12,41 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use ink_primitives::{
+    Address,
+    U256,
+};
+use pallet_revive_uapi::CallFlags;
+
 use crate::{
+    Error,
     call::{
+        CallBuilder,
+        CallParams,
+        ExecutionInput,
         common::{
             ReturnType,
             Set,
             Unset,
         },
-        execution::EmptyArgumentList,
+        execution::{
+            EmptyArgumentList,
+            EncodeArgsWith,
+        },
         utils::DecodeMessageResult,
-        CallBuilder,
-        CallParams,
-        ExecutionInput,
     },
     types::{
         Environment,
         Gas,
     },
-    Error,
 };
-use ink_primitives::{
-    reflect::{
-        AbiDecodeWith,
-        AbiEncodeWith,
-    },
-    H160,
-    U256,
-};
-use pallet_revive_uapi::CallFlags;
 
 /// The default call type for cross-contract calls, for calling into the latest `call`
 /// host function. This adds the additional weight limit parameter `proof_size_limit` as
 /// well as `storage_deposit_limit`.
 #[derive(Clone)]
 pub struct Call {
-    callee: H160,
+    callee: Address,
     ref_time_limit: u64,
     proof_size_limit: u64,
     storage_deposit_limit: Option<U256>,
@@ -56,7 +56,7 @@ pub struct Call {
 
 impl Call {
     /// Returns a clean builder for [`Call`].
-    pub fn new(callee: H160) -> Self {
+    pub fn new(callee: Address) -> Self {
         Self {
             callee,
             ref_time_limit: u64::MAX,
@@ -204,8 +204,8 @@ impl<E, Abi>
     >
 where
     E: Environment,
-    EmptyArgumentList<Abi>: AbiEncodeWith<Abi>,
-    (): AbiDecodeWith<Abi> + DecodeMessageResult<Abi>,
+    EmptyArgumentList<Abi>: EncodeArgsWith<Abi>,
+    (): DecodeMessageResult<Abi>,
     Abi: Default,
 {
     /// Invokes the cross-chain function call.
@@ -235,8 +235,8 @@ impl<E, Args, R, Abi>
     CallBuilder<E, Set<Call>, Set<ExecutionInput<Args, Abi>>, Set<ReturnType<R>>>
 where
     E: Environment,
-    Args: AbiEncodeWith<Abi>,
-    R: AbiDecodeWith<Abi> + DecodeMessageResult<Abi>,
+    Args: EncodeArgsWith<Abi>,
+    R: DecodeMessageResult<Abi>,
     Abi: Default,
 {
     /// Invokes the cross-chain function call and returns the result.
@@ -268,7 +268,7 @@ where
 {
     /// Returns the contract address of the called contract instance.
     #[inline]
-    pub fn callee(&self) -> &H160 {
+    pub fn callee(&self) -> &Address {
         &self.call_type.callee
     }
 
@@ -307,8 +307,8 @@ where
 impl<E, Args, R, Abi> CallParams<E, Call, Args, R, Abi>
 where
     E: Environment,
-    Args: AbiEncodeWith<Abi>,
-    R: AbiDecodeWith<Abi> + DecodeMessageResult<Abi>,
+    Args: EncodeArgsWith<Abi>,
+    R: DecodeMessageResult<Abi>,
 {
     /// Invokes the contract with the given built-up call parameters.
     ///

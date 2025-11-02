@@ -5,14 +5,13 @@ mod instantiate_contract {
     use contract1::Contract1Ref;
     use contract2::Contract2Ref;
     use ink::{
+        H256,
         env::call::{
-            build_call,
-            build_create,
             ExecutionInput,
             Selector,
+            build_call,
+            build_create,
         },
-        H160,
-        H256,
     };
 
     #[ink(storage)]
@@ -43,12 +42,11 @@ mod instantiate_contract {
                 .instantiate_contract(&create_params)
                 .unwrap_or_else(|error| {
                     panic!(
-                        "Received an error from `pallet-revive` while instantiating: {:?}",
-                        error
+                        "Received an error from `pallet-revive` while instantiating: {error:?}"
                     )
                 })
                 .unwrap_or_else(|error| {
-                    panic!("Received a `LangError` while instatiating: {:?}", error)
+                    panic!("Received a `LangError` while instantiating: {error:?}")
                 })
         }
 
@@ -70,17 +68,16 @@ mod instantiate_contract {
                 .instantiate_contract(&create_params)
                 .unwrap_or_else(|error| {
                     panic!(
-                        "Received an error from `pallet-revive` while instantiating: {:?}",
-                        error
+                        "Received an error from `pallet-revive` while instantiating: {error:?}"
                     )
                 })
                 .unwrap_or_else(|error| {
-                    panic!("Received a `LangError` while instatiating: {:?}", error)
+                    panic!("Received a `LangError` while instantiating: {error:?}")
                 })
         }
 
         #[ink(message)]
-        pub fn contract1_get_x(&self, contract1_address: H160) -> u32 {
+        pub fn contract1_get_x(&self, contract1_address: Address) -> u32 {
             let call = build_call()
                 .call(contract1_address)
                 .transferred_value(0.into())
@@ -93,15 +90,13 @@ mod instantiate_contract {
             self.env()
                 .invoke_contract(&call)
                 .unwrap_or_else(|env_err| {
-                    panic!("Received an error from the Environment: {:?}", env_err)
+                    panic!("Received an error from the Environment: {env_err:?}")
                 })
-                .unwrap_or_else(|lang_err| {
-                    panic!("Received a `LangError`: {:?}", lang_err)
-                })
+                .unwrap_or_else(|lang_err| panic!("Received a `LangError`: {lang_err:?}"))
         }
 
         #[ink(message)]
-        pub fn contract2_get_x(&self, contract2_address: H160) -> u32 {
+        pub fn contract2_get_x(&self, contract2_address: Address) -> u32 {
             let call = build_call()
                 .call(contract2_address)
                 .transferred_value(0.into())
@@ -114,15 +109,13 @@ mod instantiate_contract {
             self.env()
                 .invoke_contract(&call)
                 .unwrap_or_else(|env_err| {
-                    panic!("Received an error from the Environment: {:?}", env_err)
+                    panic!("Received an error from the Environment: {env_err:?}")
                 })
-                .unwrap_or_else(|lang_err| {
-                    panic!("Received a `LangError`: {:?}", lang_err)
-                })
+                .unwrap_or_else(|lang_err| panic!("Received a `LangError`: {lang_err:?}"))
         }
 
         #[ink(message)]
-        pub fn contract1_set_x(&self, contract1_address: H160, new_x: u32) {
+        pub fn contract1_set_x(&self, contract1_address: Address, new_x: u32) {
             let call = ink::env::call::build_call()
                 .call(contract1_address)
                 .transferred_value(0.into())
@@ -136,15 +129,13 @@ mod instantiate_contract {
             self.env()
                 .invoke_contract(&call)
                 .unwrap_or_else(|env_err| {
-                    panic!("Received an error from the Environment: {:?}", env_err)
+                    panic!("Received an error from the Environment: {env_err:?}")
                 })
-                .unwrap_or_else(|lang_err| {
-                    panic!("Received a `LangError`: {:?}", lang_err)
-                })
+                .unwrap_or_else(|lang_err| panic!("Received a `LangError`: {lang_err:?}"))
         }
 
         #[ink(message)]
-        pub fn contract2_set_x(&self, contract2_address: H160, new_x: u64) {
+        pub fn contract2_set_x(&self, contract2_address: Address, new_x: u64) {
             let call = ink::env::call::build_call()
                 .call(contract2_address)
                 .transferred_value(0.into())
@@ -158,11 +149,9 @@ mod instantiate_contract {
             self.env()
                 .invoke_contract(&call)
                 .unwrap_or_else(|env_err| {
-                    panic!("Received an error from the Environment: {:?}", env_err)
+                    panic!("Received an error from the Environment: {env_err:?}")
                 })
-                .unwrap_or_else(|lang_err| {
-                    panic!("Received a `LangError`: {:?}", lang_err)
-                })
+                .unwrap_or_else(|lang_err| panic!("Received a `LangError`: {lang_err:?}"))
         }
     }
 
@@ -183,7 +172,7 @@ mod instantiate_contract {
             contract: &ContractTester,
             code_hash: H256,
             salt: u32,
-        ) -> H160 {
+        ) -> Address {
             let cr = contract.instantiate_contract1(code_hash, salt);
             ink::ToAddr::to_addr(&cr)
         }
@@ -192,7 +181,7 @@ mod instantiate_contract {
             contract: &ContractTester,
             code_hash: H256,
             salt: u32,
-        ) -> H160 {
+        ) -> Address {
             let cr = contract.instantiate_contract2(code_hash, salt);
             ink::ToAddr::to_addr(&cr)
         }
@@ -278,16 +267,15 @@ mod instantiate_contract {
             let addr2 = ink::env::instantiate_contract(&create_params)
                 .unwrap_or_else(|error| {
                     panic!(
-                        "Received an error from `pallet-revive` while instantiating: {:?}",
-                        error
+                        "Received an error from `pallet-revive` while instantiating: {error:?}"
                     )
                 })
                 .unwrap_or_else(|error| {
-                    panic!("Received a `LangError` while instatiating: {:?}", error)
+                    panic!("Received a `LangError` while instantiating: {error:?}")
                 });
 
             use ink::ToAddr;
-            let addr2: H160 = addr2.to_addr();
+            let addr2: Address = addr2.to_addr();
 
             let create_params = build_create::<VirtualContractVer2Ref>()
                 .code_hash(code_hash3)
@@ -301,18 +289,17 @@ mod instantiate_contract {
             let addr3 = ink::env::instantiate_contract(&create_params)
                 .unwrap_or_else(|error| {
                     panic!(
-                        "Received an error from `pallet-revive` while instantiating: {:?}",
-                        error
+                        "Received an error from `pallet-revive` while instantiating: {error:?}"
                     )
                 })
                 .unwrap_or_else(|error| {
-                    panic!("Received a `LangError` while instatiating: {:?}", error)
+                    panic!("Received a `LangError` while instantiating: {error:?}")
                 });
-            let addr3: H160 = addr3.to_addr();
+            let addr3: Address = addr3.to_addr();
 
             // creates `code_hash1` contract and puts `hash` + `x` as the constructor
             // arguments
-            let instantiate = |delegate_addr: H160, salt: u32, x| {
+            let instantiate = |delegate_addr: Address, salt: u32, x| {
                 let mut salt_bytes = [0u8; 32];
                 salt_bytes[..4].copy_from_slice(&salt.to_le_bytes());
                 let create_params = build_create::<VirtualContractRef>()
@@ -331,12 +318,11 @@ mod instantiate_contract {
                 ink::env::instantiate_contract(&create_params)
                     .unwrap_or_else(|error| {
                         panic!(
-                            "Received an error from `pallet-revive` while instantiating: {:?}",
-                            error
+                            "Received an error from `pallet-revive` while instantiating: {error:?}"
                         )
                     })
                     .unwrap_or_else(|error| {
-                        panic!("Received a `LangError` while instatiating: {:?}", error)
+                        panic!("Received a `LangError` while instantiating: {error:?}")
                     })
             };
 
@@ -376,8 +362,8 @@ mod instantiate_contract {
             InstantiationResult,
         };
         use virtual_contract::{
-            virtual_contract::VirtualContract,
             VirtualContractRef,
+            virtual_contract::VirtualContract,
         };
         use virtual_contract_ver1::VirtualContractVer1Ref;
         use virtual_contract_ver2::VirtualContractVer2Ref;
@@ -388,15 +374,15 @@ mod instantiate_contract {
             origin: &ink_e2e::Keypair,
             client: &mut Client,
 
-            ver1: &InstantiationResult<E, B>,
-            ver2: &InstantiationResult<E, B>,
+            ver1: &InstantiationResult<E, B, ink::env::DefaultAbi>,
+            ver2: &InstantiationResult<E, B, ink::env::DefaultAbi>,
 
             a: u32,
             b: u32,
             c: u32,
             d: u32,
         ) where
-            Client: E2EBackend,
+            Client: E2EBackend<ink::env::DefaultEnvironment>,
             E: ink::env::Environment,
         {
             let r1 = ver1.call_builder::<VirtualContract>();

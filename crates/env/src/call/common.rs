@@ -14,16 +14,22 @@
 
 //! Utilities, types and abstractions common to call and instantiation routines.
 
-use alloy_sol_types::SolValue;
 use core::marker::PhantomData;
+
 use ink_primitives::{
-    reflect::{
-        AbiDecodeWith,
-        ScaleEncoding,
-        SolEncoding,
-    },
+    LangError,
     MessageResult,
+    abi::{
+        Ink,
+        Sol,
+    },
+    sol::{
+        SolErrorDecode,
+        SolResultDecode,
+        SolResultDecodeError,
+    },
 };
+use pallet_revive_uapi::ReturnErrorCode;
 use scale::{
     Decode,
     DecodeAll,
@@ -121,34 +127,162 @@ impl<T> Unwrap for Set<T> {
     }
 }
 
-/// A trait for decoding the output of a message based on different ABIs.
-/// This is necessary as contracts with different ABIs have different return types.
-/// For example, Solidity contracts return the output directly without `MessageResult`.
+/// A trait for decoding the output of a message based on the ABI.
+///
+/// # Note
+///
+/// This is necessary because messages supporting different ABI have different return
+/// types. For example, Solidity ABI encoded messages return the output directly without
+/// `MessageResult`.
 pub trait DecodeMessageResult<Abi>: Sized {
     /// Decodes the output of a message call, requiring the output
     /// to be wrapped with `MessageResult` (if not included in the output).
-    fn decode_output(buffer: &[u8]) -> crate::Result<MessageResult<Self>>;
+    fn decode_output(
+        buffer: &[u8],
+        did_revert: bool,
+    ) -> crate::Result<MessageResult<Self>>;
 }
 
-impl<R> DecodeMessageResult<ScaleEncoding> for R
+impl<R> DecodeMessageResult<Ink> for R
 where
     R: Decode,
     MessageResult<R>: Decode,
 {
-    fn decode_output(mut buffer: &[u8]) -> crate::Result<MessageResult<Self>> {
+    fn decode_output(mut buffer: &[u8], _: bool) -> crate::Result<MessageResult<Self>> {
         let decoded = MessageResult::<R>::decode_all(&mut buffer)?;
         Ok(decoded)
     }
 }
 
-impl<R> DecodeMessageResult<SolEncoding> for R
+impl<R> DecodeMessageResult<Sol> for R
 where
-    R: SolValue + From<<<R as SolValue>::SolType as alloy_sol_types::SolType>::RustType>,
+    R: SolResultDecode,
 {
-    fn decode_output(buffer: &[u8]) -> crate::Result<MessageResult<Self>> {
+    fn decode_output(
+        buffer: &[u8],
+        did_revert: bool,
+    ) -> crate::Result<MessageResult<Self>> {
         // Solidity ABI Encoded contracts return the data without
         // `MessageResult`.
-        let decoded = R::decode_with(buffer)?;
+        let decoded = R::decode(buffer, did_revert)?;
         Ok(Ok(decoded))
+    }
+}
+
+impl From<SolResultDecodeError> for crate::Error {
+    fn from(value: SolResultDecodeError) -> Self {
+        match value {
+            SolResultDecodeError::NonResultFromRevert => {
+                Self::ReturnError(ReturnErrorCode::CalleeReverted)
+            }
+            SolResultDecodeError::Decode => Self::DecodeSol(ink_primitives::sol::Error),
+        }
+    }
+}
+
+/// A trait for decoding constructor error data based on ABI.
+///
+/// # Note
+///
+/// This is necessary because constructors supporting different ABIs encode return data
+/// differently.
+///
+/// For example, ink! ABI encoded constructors return data encoded as
+/// `ConstructorResult<Result<_, Error>, LangErr>` where `Error` is either the user
+/// defined error for fallible constructors, or unit (i.e. `()`) for infallible
+/// constructors. On the other hand, Solidity ABI encoded constructors always return the
+/// output data directly and the state of the revert flag determines whether its "normal"
+/// return data or error data.
+///
+/// This trait assumes the caller has already checked that the revert flag is set.
+pub trait DecodeConstructorError<Abi>: Sized {
+    /// Decodes constructor error data.
+    fn decode_error_output(buffer: &[u8]) -> ConstructorError<Self>;
+}
+
+/// A decoded constructor error.
+pub enum ConstructorError<E> {
+    /// A user defined error.
+    Contract(E),
+    /// A `LangError`.
+    Lang(LangError),
+    /// An environmental error.
+    Env(crate::Error),
+}
+
+impl<E> DecodeConstructorError<Ink> for E
+where
+    E: Decode,
+{
+    fn decode_error_output(mut buffer: &[u8]) -> ConstructorError<Self> {
+        // ink! ABI encoded constructors return data encoded as
+        // `ConstructorResult<Result<_, Error>, LangErr>` where `Error` is either the user
+        // defined error for fallible entry points or unit (i.e. `()`) for
+        // infallible entry points.
+        let out_return_value = &mut buffer;
+
+        // Debug friendly SCALE decode errors.
+        const INVALID_OUTER_RESULT: &str = "Invalid outer constructor Result encoding, \
+        expected 0 or 1 as the first byte";
+        const INVALID_INNER_RESULT: &str = "Invalid inner constructor Result encoding, \
+        expected 0 or 1 as the first byte";
+        const REVERT_BUT_NOT_ERROR_DATA: &str =
+            "The callee reverted, but did not encode an error in the output buffer.";
+        fn scale_decode_err<T>(desc: &'static str) -> ConstructorError<T> {
+            ConstructorError::Env(crate::Error::Decode(desc.into()))
+        }
+
+        let Ok(lang_result_variant) = <_ as scale::Input>::read_byte(out_return_value)
+        else {
+            return scale_decode_err(INVALID_OUTER_RESULT);
+        };
+        match lang_result_variant {
+            // 0 == `ConstructorResult::Ok` variant
+            0 => {
+                let Ok(inner_result_variant) =
+                    <_ as scale::Input>::read_byte(out_return_value)
+                else {
+                    return scale_decode_err(INVALID_INNER_RESULT);
+                };
+                match inner_result_variant {
+                    // 0 == `Ok` variant
+                    0 => scale_decode_err(REVERT_BUT_NOT_ERROR_DATA),
+                    // 1 == `Err` variant
+                    1 => {
+                        let decoded = <E as scale::Decode>::decode(out_return_value);
+                        match decoded {
+                            Ok(contract_err) => ConstructorError::Contract(contract_err),
+                            Err(error) => {
+                                ConstructorError::Env(crate::Error::Decode(error))
+                            }
+                        }
+                    }
+                    _ => scale_decode_err(INVALID_INNER_RESULT),
+                }
+            }
+            // 1 == `ConstructorResult::Err` variant
+            1 => {
+                let decoded = <LangError as scale::Decode>::decode(out_return_value);
+                match decoded {
+                    Ok(lang_err) => ConstructorError::Lang(lang_err),
+                    Err(error) => ConstructorError::Env(crate::Error::Decode(error)),
+                }
+            }
+            _ => scale_decode_err(INVALID_OUTER_RESULT),
+        }
+    }
+}
+
+impl<E> DecodeConstructorError<Sol> for E
+where
+    E: SolErrorDecode,
+{
+    fn decode_error_output(buffer: &[u8]) -> ConstructorError<Self> {
+        // Solidity ABI encoded entry points return error data directly.
+        let decoded = SolErrorDecode::decode(buffer);
+        match decoded {
+            Ok(contract_err) => ConstructorError::Contract(contract_err),
+            Err(error) => ConstructorError::Env(crate::Error::DecodeSol(error)),
+        }
     }
 }

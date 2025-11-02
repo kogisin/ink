@@ -17,28 +17,15 @@ use ink_linting_utils::{
     clippy::{
         diagnostics::span_lint_and_help,
         is_lint_allowed,
-        match_def_path,
-        match_path,
     },
     expand_unnamed_consts,
     find_contract_impl_id,
     find_storage_struct,
+    match_def_path,
+    match_path,
 };
 use rustc_hir::{
     self as hir,
-    def::{
-        DefKind,
-        Res,
-    },
-    def_id::{
-        DefId,
-        LocalDefId,
-    },
-    intravisit::{
-        walk_body,
-        walk_expr,
-        Visitor,
-    },
     Expr,
     ExprKind,
     ImplItemKind,
@@ -48,6 +35,19 @@ use rustc_hir::{
     Path,
     QPath,
     TyKind,
+    def::{
+        DefKind,
+        Res,
+    },
+    def_id::{
+        DefId,
+        LocalDefId,
+    },
+    intravisit::{
+        Visitor,
+        walk_body,
+        walk_expr,
+    },
 };
 use rustc_lint::{
     LateContext,
@@ -58,8 +58,8 @@ use rustc_session::{
     declare_lint_pass,
 };
 use std::collections::{
-    btree_map::Entry,
     BTreeMap,
+    btree_map::Entry,
 };
 
 declare_lint! {
@@ -187,7 +187,7 @@ fn find_collection_def_id(
 fn find_collection_fields(cx: &LateContext, storage_struct_id: ItemId) -> FieldsMap {
     let mut result = FieldsMap::new();
     let item = cx.tcx.hir_item(storage_struct_id);
-    if let ItemKind::Struct(var_data, _) = item.kind {
+    if let ItemKind::Struct(_, var_data, _) = item.kind {
         var_data.fields().iter().for_each(|field_def| {
             if_chain! {
                 // Collection fields of the storage are expanded like this:

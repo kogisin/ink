@@ -12,12 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::TraitDefinition;
-use crate::{
-    generator,
-    traits::GenerateCode,
-};
 use derive_more::From;
+use ink_primitives::abi::Abi;
 use proc_macro2::{
     Span,
     TokenStream as TokenStream2,
@@ -25,6 +21,12 @@ use proc_macro2::{
 use quote::{
     quote,
     quote_spanned,
+};
+
+use super::TraitDefinition;
+use crate::{
+    generator,
+    traits::GenerateCode,
 };
 
 impl TraitDefinition<'_> {
@@ -38,8 +40,8 @@ impl TraitDefinition<'_> {
     /// - The call forwarder is associated to the call builder for the same ink! trait
     ///   definition and handles all ink! trait calls into another contract instance
     ///   on-chain. For constructing custom calls it forwards to the call builder.
-    pub fn generate_call_forwarder(&self) -> TokenStream2 {
-        CallForwarder::from(*self).generate_code()
+    pub fn generate_call_forwarder(&self, abi: Option<Abi>) -> TokenStream2 {
+        CallForwarder::from((*self, abi)).generate_code()
     }
 
     /// The identifier of the ink! trait call forwarder.
@@ -52,6 +54,7 @@ impl TraitDefinition<'_> {
 #[derive(From)]
 struct CallForwarder<'a> {
     trait_def: TraitDefinition<'a>,
+    abi: Option<Abi>,
 }
 
 impl GenerateCode for CallForwarder<'_> {
@@ -111,11 +114,12 @@ impl CallForwarder<'_> {
             #[allow(non_camel_case_types)]
             #[::ink::scale_derive(Encode, Decode)]
             #[repr(transparent)]
-            pub struct #call_forwarder_ident<E>
+            pub struct #call_forwarder_ident<E, Abi>
             where
                 E: ::ink::env::Environment,
             {
                 builder: <Self as ::ink::codegen::TraitCallBuilder>::Builder,
+                _marker: ::core::marker::PhantomData<fn() -> Abi>,
             }
         )
     }
@@ -132,11 +136,11 @@ impl CallForwarder<'_> {
         let call_forwarder_ident = self.ident();
         quote_spanned!(span=>
             #[cfg(feature = "std")]
-            impl<E> ::ink::storage::traits::StorageLayout
-                for #call_forwarder_ident<E>
+            impl<E, Abi> ::ink::storage::traits::StorageLayout
+                for #call_forwarder_ident<E, Abi>
             where
                 E: ::ink::env::Environment,
-                ::ink::H160: ::ink::storage::traits::StorageLayout,
+                ::ink::Address: ::ink::storage::traits::StorageLayout,
             {
                 fn layout(
                     __key: &::ink::primitives::Key,
@@ -159,27 +163,61 @@ impl CallForwarder<'_> {
     fn generate_auxiliary_trait_impls(&self) -> TokenStream2 {
         let span = self.span();
         let call_forwarder_ident = self.ident();
+        let sol_codec = if cfg!(any(ink_abi = "sol", ink_abi = "all")) {
+            // These manual implementations are a bit more efficient than the derived
+            // equivalents.
+            quote_spanned!(span=>
+                impl<E, Abi> ::ink::SolDecode for #call_forwarder_ident<E, Abi>
+                where
+                    E: ::ink::env::Environment,
+                {
+                    type SolType = ::ink::Address;
+
+                    fn from_sol_type(value: Self::SolType) -> ::core::result::Result<Self, ::ink::sol::Error> {
+                        Ok(Self {
+                            builder: <<Self as ::ink::codegen::TraitCallBuilder>::Builder
+                                as ::ink::env::call::FromAddr>::from_addr(value),
+                            _marker: ::core::marker::PhantomData,
+                        })
+                    }
+                }
+
+                impl<'a, E, Abi> ::ink::SolEncode<'a> for #call_forwarder_ident<E, Abi>
+                where
+                    E: ::ink::env::Environment,
+                {
+                    type SolType = &'a ::ink::Address;
+
+                    fn to_sol_type(&'a self) -> Self::SolType {
+                        self.as_ref()
+                    }
+                }
+            )
+        } else {
+            quote!()
+        };
         quote_spanned!(span=>
             /// We require this manual implementation since the derive produces incorrect trait bounds.
-            impl<E> ::core::clone::Clone for #call_forwarder_ident<E>
+            impl<E, Abi> ::core::clone::Clone for #call_forwarder_ident<E, Abi>
             where
                 E: ::ink::env::Environment,
-                ::ink::H160: ::core::clone::Clone,
+                ::ink::Address: ::core::clone::Clone,
             {
                 #[inline]
                 fn clone(&self) -> Self {
                     Self {
                         builder: <<Self as ::ink::codegen::TraitCallBuilder>::Builder
                             as ::core::clone::Clone>::clone(&self.builder),
+                        _marker: self._marker,
                     }
                 }
             }
 
             /// We require this manual implementation since the derive produces incorrect trait bounds.
-            impl<E> ::core::fmt::Debug for #call_forwarder_ident<E>
+            impl<E, Abi> ::core::fmt::Debug for #call_forwarder_ident<E, Abi>
             where
                 E: ::ink::env::Environment,
-                ::ink::H160: ::core::fmt::Debug,
+                ::ink::Address: ::core::fmt::Debug,
             {
                 fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
                     f.debug_struct(::core::stringify!(#call_forwarder_ident))
@@ -190,10 +228,10 @@ impl CallForwarder<'_> {
 
             #[cfg(feature = "std")]
             /// We require this manual implementation since the derive produces incorrect trait bounds.
-            impl<E> ::ink::scale_info::TypeInfo for #call_forwarder_ident<E>
+            impl<E, Abi> ::ink::scale_info::TypeInfo for #call_forwarder_ident<E, Abi>
             where
                 E: ::ink::env::Environment,
-                ::ink::H160: ::ink::scale_info::TypeInfo + 'static,
+                ::ink::Address: ::ink::scale_info::TypeInfo + 'static,
             {
                 type Identity = <
                     <Self as ::ink::codegen::TraitCallBuilder>::Builder as ::ink::scale_info::TypeInfo
@@ -205,6 +243,8 @@ impl CallForwarder<'_> {
                     >::type_info()
                 }
             }
+
+            #sol_codec
         )
     }
 
@@ -219,54 +259,64 @@ impl CallForwarder<'_> {
         let span = self.span();
         let call_forwarder_ident = self.ident();
         quote_spanned!(span=>
-            impl<E> ::ink::env::call::FromAddr
-                for #call_forwarder_ident<E>
+            impl<E, Abi> ::ink::env::call::FromAddr
+                for #call_forwarder_ident<E, Abi>
             where
                 E: ::ink::env::Environment,
             {
                 #[inline]
-                fn from_addr(addr: ::ink::H160) -> Self {
-                    Self { builder: <<Self as ::ink::codegen::TraitCallBuilder>::Builder
-                        as ::ink::env::call::FromAddr>::from_addr(addr) }
+                fn from_addr(addr: ::ink::Address) -> Self {
+                    Self {
+                        builder: <<Self as ::ink::codegen::TraitCallBuilder>::Builder
+                            as ::ink::env::call::FromAddr>::from_addr(addr),
+                        _marker: ::core::default::Default::default(),
+                    }
                 }
             }
 
-            impl<E> ::core::convert::From<::ink::H160> for #call_forwarder_ident<E>
+            impl<E, Abi> ::core::convert::From<::ink::Address> for #call_forwarder_ident<E, Abi>
             where
                 E: ::ink::env::Environment,
             {
-                fn from(addr: ::ink::H160) -> Self {
+                fn from(addr: ::ink::Address) -> Self {
                     <Self as ::ink::env::call::FromAddr>::from_addr(addr)
                 }
             }
 
-            impl<E> ::ink::ToAddr for #call_forwarder_ident<E>
+            impl<E, Abi> ::ink::ToAddr for #call_forwarder_ident<E, Abi>
             where
                 E: ::ink::env::Environment,
             {
                 #[inline]
-                fn to_addr(&self) -> ::ink::H160 {
+                fn to_addr(&self) -> ::ink::Address {
                     <<Self as ::ink::codegen::TraitCallBuilder>::Builder
                         as ::ink::ToAddr>::to_addr(&self.builder)
                 }
             }
 
-            impl<E> ::core::convert::AsRef<::ink::H160> for #call_forwarder_ident<E>
+            impl<E, Abi> ::core::convert::AsRef<::ink::Address> for #call_forwarder_ident<E, Abi>
             where
                 E: ::ink::env::Environment,
             {
-                fn as_ref(&self) -> &::ink::H160 {
-                    <_ as ::core::convert::AsRef<::ink::H160>>::as_ref(&self.builder)
+                fn as_ref(&self) -> &::ink::Address {
+                    <_ as ::core::convert::AsRef<::ink::Address>>::as_ref(&self.builder)
                 }
             }
 
-            impl<E> ::core::convert::AsMut<::ink::H160> for #call_forwarder_ident<E>
+            impl<E, Abi> ::core::convert::AsMut<::ink::Address> for #call_forwarder_ident<E, Abi>
             where
                 E: ::ink::env::Environment,
             {
-                fn as_mut(&mut self) -> &mut ::ink::H160 {
-                    <_ as ::core::convert::AsMut<::ink::H160>>::as_mut(&mut self.builder)
+                fn as_mut(&mut self) -> &mut ::ink::Address {
+                    <_ as ::core::convert::AsMut<::ink::Address>>::as_mut(&mut self.builder)
                 }
+            }
+
+            impl<E, Abi> ::ink::env::ContractEnv for #call_forwarder_ident<E, Abi>
+            where
+                E: ::ink::env::Environment,
+            {
+                type Env = E;
             }
         )
     }
@@ -288,11 +338,11 @@ impl CallForwarder<'_> {
             /// Also this explains why we designed the generated code so that we have
             /// both types and why the forwarder is a thin-wrapper around the builder
             /// as this allows to perform this operation safely.
-            impl<E> ::ink::codegen::TraitCallBuilder for #call_forwarder_ident<E>
+            impl<E, Abi> ::ink::codegen::TraitCallBuilder for #call_forwarder_ident<E, Abi>
             where
                 E: ::ink::env::Environment,
             {
-                type Builder = #call_builder_ident<E>;
+                type Builder = #call_builder_ident<E, Abi>;
 
                 #[inline]
                 fn call(&self) -> &<Self as ::ink::codegen::TraitCallBuilder>::Builder {
@@ -319,24 +369,29 @@ impl CallForwarder<'_> {
         let trait_info_ident = self.trait_def.trait_info_ident();
         let forwarder_ident = self.ident();
         let message_impls = self.generate_ink_trait_impl_messages();
-        quote_spanned!(span=>
-            impl<E> ::ink::env::ContractEnv for #forwarder_ident<E>
-            where
-                E: ::ink::env::Environment,
-            {
-                type Env = E;
-            }
+        let generator = |abi| {
+            quote_spanned!(span=>
+                impl<E> #trait_ident for #forwarder_ident<E, #abi>
+                where
+                    E: ::ink::env::Environment,
+                {
+                    #[allow(non_camel_case_types)]
+                    type __ink_TraitInfo = #trait_info_ident<E>;
 
-            impl<E> #trait_ident for #forwarder_ident<E>
-            where
-                E: ::ink::env::Environment,
-            {
-                #[allow(non_camel_case_types)]
-                type __ink_TraitInfo = #trait_info_ident<E>;
-
-                #message_impls
+                    #message_impls
+                }
+            )
+        };
+        match self.abi {
+            None => generate_abi_impls!(@tokens generator),
+            Some(abi) => {
+                let abi_ty = match abi {
+                    Abi::Ink => quote!(::ink::abi::Ink),
+                    Abi::Sol => quote!(::ink::abi::Sol),
+                };
+                generator(abi_ty)
             }
-        )
+        }
     }
 
     /// Generate the code for all ink! trait messages implemented by the trait call

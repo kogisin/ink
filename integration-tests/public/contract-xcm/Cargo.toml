@@ -1,17 +1,15 @@
 [package]
 name = "contract-xcm"
-version = "6.0.0-alpha"
+version = "6.0.0-beta"
 authors = ["Use Ink <ink@use.ink>"]
-edition = "2021"
+edition = "2024"
 publish = false
 
 [dependencies]
-ink = { path = "../../../crates/ink", default-features = false, features = ["unstable-hostfn"] }
-frame-support = { git = "https://github.com/paritytech/polkadot-sdk", rev = "28a7ae71cc0eac747bf346804279217a68f700da", default-features = false }
-pallet-balances = { git = "https://github.com/paritytech/polkadot-sdk", rev = "28a7ae71cc0eac747bf346804279217a68f700da", default-features = false }
+ink = { path = "../../../crates/ink", default-features = false, features = ["xcm"] }
 
 [dev-dependencies]
-ink_e2e = { path = "../../../crates/e2e", features = ["sandbox"] }
+ink_e2e = { path = "../../../crates/e2e" }
 
 [lib]
 path = "lib.rs"
@@ -20,8 +18,9 @@ path = "lib.rs"
 default = ["std"]
 std = [
     "ink/std",
-    "pallet-balances/std",
-    "frame-support/std",
 ]
 ink-as-dependency = []
 e2e-tests = []
+
+[package.metadata.ink-lang]
+abi = "ink"
